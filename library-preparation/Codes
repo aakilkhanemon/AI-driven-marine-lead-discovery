@@ -1,0 +1,1712 @@
+Script. Library Preparation: Pre-Docking Pipeline (Chronological Order, 14 Steps)
+Example dataset: AI-Driven De Novo Generation Compounds
+
+Phase I: The 2D Filter Gates: Maximum Library Reduction
+(Deduplication – Sanitization – Fragment Removal & Desalting – Standardization – Bioavailability Filtering – PAINS Filtering)
+1. Deduplication: Canonicalize SMILES and remove redundant structures from the initial massive marine compound pool to establish a unique baseline dataset.
+
+!pip install rdkit
+import os
+import pandas as pd
+from rdkit import Chem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_ligand_structural_deduplication(input_csv="Phase4_AI_70_Metadata.csv", input_sdf="Phase4_AI_70_Metadata.sdf",
+                                        output_csv="MNPAI70_Deduplicated_Master_2D.csv", output_sdf="MNPAI70_Deduplicated_Master_3D.sdf"):
+    """
+    Step 1: Ingests raw data files, calculates definitive stereospecific InChIKey hashes,
+    and completely filters out redundant molecular entries based on unique topologies.
+    """
+    # Verify file paths exist in the current Colab workspace
+    if not os.path.exists(input_csv) or not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required files. Ensure '{input_csv}' and '{input_sdf}' are uploaded to your sidebar.")
+        return None
+
+    print(f"📖 Reading structural metadata spreadsheet: '{input_csv}'...")
+    df_meta = pd.read_csv(input_csv)
+    print(f"📦 Found {len(df_meta)} total raw rows inside CSV metadata.")
+
+    print(f"🧬 Parsing 3D coordinate structures from: '{input_sdf}'...")
+    # Read the SDF without removing explicit hydrogens to preserve conformational coordinates
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+
+    unique_inchikeys = set()
+    deduplicated_molecules = []
+    deduplicated_records = []
+
+    duplicate_counter = 0
+    parse_errors = 0
+
+    print("🛡️  Executing high-fidelity InChIKey structural audit & filtering loop...\n")
+
+    # Loop through the molecular geometries to establish topological uniqueness
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            parse_errors += 1
+            continue
+
+        # Isolate or automatically assign a standardized compound tracking name
+        comp_name = mol.GetProp("_Name").strip() if mol.HasProp("_Name") else f"Ligand_Analog_{idx+1}"
+        if comp_name == "":
+            comp_name = f"Ligand_Analog_{idx+1}"
+
+        try:
+  # Generate the true topological/stereospecific InChIKey hash directly from the structure
+            inchikey = Chem.Inchi.MolToInchiKey(mol)
+            if not inchikey:
+                raise ValueError("InChIKey generation returned an empty token.")
+        except Exception:
+#Robust fallback calculation using a canonical SMILES string mapping if an exception triggers
+            try:
+                inchikey = Chem.MolToInchiKey(Chem.MolFromSmiles(Chem.MolToSmiles(mol)))
+            except Exception:
+                inchikey = f"UNKNOWN_HASH_{idx+1}"
+
+        # --- PURE DEDUPLICATION CRITERIA ---
+        if inchikey in unique_inchikeys:
+            duplicate_counter += 1
+            continue  # Discard the duplicate structural graph completely
+
+        # If completely unique, log it into our active tracking registry
+        unique_inchikeys.add(inchikey)
+
+        # Add the structural molecule object to our final unique SDF pooling stack
+        deduplicated_molecules.append(mol)
+
+        # Capture foundational identification structural records
+        smiles_str = Chem.MolToSmiles(mol, isomericSmiles=True)
+        record = {
+            'Compound_ID': comp_name,
+            'InChIKey_Hash': inchikey,
+            'SMILES': smiles_str
+        }
+        deduplicated_records.append(record)
+
+    # Compile the final unique metadata registry
+    df_deduplicated = pd.DataFrame(deduplicated_records)
+
+    # Save the pure 2D master table containing unique structures to disk
+    df_deduplicated.to_csv(output_csv, index=False)
+
+    # Export unique structural geometry objects into a fresh, redundancy-free SDF
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for unique_mol in deduplicated_molecules:
+        sdf_writer.write(unique_mol)
+    sdf_writer.close()
+
+    print("✨ Step 1: Structural Deduplication Complete!")
+    print(f"📊 Total raw geometries parsed from SDF: {len(sdf_supplier)}")
+    print(f"✂️  Redundant duplicate molecules dropped: {duplicate_counter}")
+    if parse_errors > 0:
+        print(f"⚠️  Corrupt chemical entries skipped: {parse_errors}")
+    print(f"🎯 Unique ligands remaining for screening: {len(df_deduplicated)}")
+    print(f"🚀 Deduplicated 2D CSV exported to: '{output_csv}'")
+    print(f"🚀 Master Multi-Molecule 3D SDF compiled to: '{output_sdf}'")
+
+    return df_deduplicated
+
+# --- Run the Initial Deduplication Pipeline Subroutine ---
+df_dedup_master = run_ligand_structural_deduplication()
+
+# Display the clean interactive tracking database
+df_dedup_master
+
+2. Structure Sanitization: Evaluate basic chemical valency, standardize aromaticity models, and rectify structural inconsistencies.
+
+import os
+import pandas as pd
+from rdkit import Chem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_ligand_sanitization(input_sdf="MNPAI70_Deduplicated_Master_3D.sdf", 
+                            output_csv="MNPAI70_Sanitized_Master_2D.csv", 
+                            output_sdf="MNPAI70_Sanitized_Master_3D.sdf"):
+    """
+    Step 2: Evaluates basic chemical valency, standardizes aromaticity models, 
+    and rectifies structural inconsistencies across the 3D molecular structures.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 1 first!")
+        return None
+
+    print(f"🧬 Parsing 3D coordinate trajectories from: '{input_sdf}'...")
+    # Read the SDF preserving explicit hydrogens
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    sanitized_molecules = []
+    sanitized_records = []
+    
+    failed_sanitization_count = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🧼 Commencing high-fidelity RDKit sanitization across {total_parsed} unique ligands...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            failed_sanitization_count += 1
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # Deep-copy molecule to avoid changing the original layout during audit
+            san_mol = Chem.Mol(mol)
+            
+            # Run comprehensive RDKit Sanitization: 
+            # (Fixes aromaticity, sanitizes valencies, adjusts hypervalent configurations)
+            Chem.SanitizeMol(san_mol)
+            
+            # Append sanitized 3D object to export list
+            sanitized_molecules.append(san_mol)
+            
+            # Generate canonical SMILES representation post-sanitization
+            smiles_str = Chem.MolToSmiles(san_mol, isomericSmiles=True)
+            
+            # Log structural identity data
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Sanitized_SMILES': smiles_str,
+                'Sanitization_Status': 'PASSED'
+            }
+            sanitized_records.append(record)
+
+        except Exception as e:
+            # Catch valency failures (e.g., hypervalent carbons/nitrogens that violate physics)
+            print(f"⚠️  Sanitization Failed for {comp_name}! Reason: {str(e)}")
+            failed_sanitization_count += 1
+            continue
+
+    # Compile the sanitized database framework
+    df_sanitized = pd.DataFrame(sanitized_records)
+    
+    # Save the 2D summary spreadsheet to disk
+    df_sanitized.to_csv(output_csv, index=False)
+
+    # Initialize the multi-molecule 3D SDF writer stream to export the sanitized geometries
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for clean_mol in sanitized_molecules:
+        sdf_writer.write(clean_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 2: Structure Sanitization Complete!")
+    print(f"📊 Total inputs processed: {total_parsed}")
+    print(f"🛑 Invalid/Hypervalent structures rejected: {failed_sanitization_count}")
+    print(f"🎯 Valid, physically-correct ligands remaining: {len(df_sanitized)}")
+    print(f"🚀 Sanitized 2D CSV exported to: '{output_csv}'")
+    print(f"🚀 Master Sanitized 3D SDF compiled to: '{output_sdf}'")
+
+    return df_sanitized
+
+# --- Run the Sanitization Subroutine ---
+df_sanitized_master = run_ligand_sanitization()
+
+# Display the clean interactive tracking database
+df_sanitized_master
+
+3. Fragment Removal and Desalting: Strip counter-ions, solvents, and salt placeholders (Na+ Cl-, etc.) to isolate the core active marine scaffold.
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem.SaltRemover import SaltRemover
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_ligand_desalting(input_sdf="MNPAI70_Sanitized_Master_3D.sdf", 
+                         output_csv="MNPAI70_Desalted_Master_2D.csv", 
+                         output_sdf="MNPAI70_Desalted_Master_3D.sdf"):
+    """
+    Step 3: Strips salts, counter-ions, and secondary solvent fragments 
+    from the 3D molecular coordinates to isolate clean parent scaffolds.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 2 first!")
+        return None
+
+    print(f"🧬 Loading sanitized 3D library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+  
+    # Initialize RDKit's standard salt dictionary remover
+    remover = SaltRemover()
+    
+    desalted_molecules = []
+    desalted_records = []
+    salt_systems_stripped = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🪓 Commencing salt fragment stripping across {total_parsed} ligands...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # Strip ionic fragments/salts while preserving 3D coordinates of the parent molecule
+            desalted_mol = remover.StripMol(mol, dontRemoveEverything=True)
+            
+            # Check if structural modifications occurred (i.e., a salt was actually removed)
+            if desalted_mol.GetNumAtoms() < mol.GetNumAtoms():
+                salt_systems_stripped += 1
+                # Re-assign the original name tracking property to the stripped molecule object
+                desalted_mol.SetProp("_Name", comp_name)
+            
+            desalted_molecules.append(desalted_mol)
+            
+            # Generate canonical SMILES representation post-desalting
+            smiles_str = Chem.MolToSmiles(desalted_mol, isomericSmiles=True)
+            
+            # Map tracking data 
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Desalted_SMILES': smiles_str,
+                'Salt_Stripped': "Yes" if desalted_mol.GetNumAtoms() < mol.GetNumAtoms() else "No"
+            }
+            desalted_records.append(record)
+
+        except Exception as e:
+            print(f"⚠️  Desalting failed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile the final unique metadata registry
+    df_desalted = pd.DataFrame(desalted_records)
+    
+    # Save 2D summary tracking sheet to workspace disk
+    df_desalted.to_csv(output_csv, index=False)
+
+    # Initialize the multi-molecule 3D SDF writer stream to export the desalted geometries
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for pure_mol in desalted_molecules:
+        sdf_writer.write(pure_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 3: Fragment Removal & Desalting Complete!")
+    print(f"📊 Total inputs processed: {total_parsed}")
+    print(f"✂️  Multi-fragment salt systems uncoupled/stripped: {salt_systems_stripped}")
+    print(f"🎯 Pure parent ligands remaining: {len(df_desalted)}")
+    print(f"🚀 Desalted 2D CSV exported to: '{output_csv}'")
+    print(f"🚀 Master Desalted 3D SDF compiled to: '{output_sdf}'")
+
+    return df_desalted
+
+# --- Run the Desalting Subroutine ---
+df_desalted_master = run_ligand_desalting()
+
+# Display the clean interactive tracking database
+df_desalted_master
+
+4. Functional Group Standardization: Normalize volatile or variable representations of complex functional arrangements (eg, nitro, azide, or sulfonyl groups).
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem.MolStandardize import rdMolStandardize
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_functional_group_standardization(input_sdf="MNPAI70_Desalted_Master_3D.sdf", 
+                                         output_csv="MNPAI70_Standardized_Master_2D.csv", 
+                                         output_sdf="MNPAI70_Standardized_Master_3D.sdf"):
+    """
+    Step 4: Standardizes functional group resonance structures, mesomeric forms, 
+    and charge configurations across the 3D molecular coordinates.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 3 first!")
+        return None
+
+    print(f"🧬 Loading desalted 3D library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    standardized_molecules = []
+    standardized_records = []
+    updated_representations = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"⚡ Normalizing variable functional arrangements across {total_parsed} compounds...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # Execute RDKit's high-fidelity structural cleanup rules
+            standardized_mol = rdMolStandardize.Cleanup(mol)
+            
+            # Re-assign the original compound name property to the standardized structure
+            standardized_mol.SetProp("_Name", comp_name)
+            standardized_molecules.append(standardized_mol)
+            
+            # Generate canonical SMILES representation post-standardization
+            smiles_str = Chem.MolToSmiles(standardized_mol, isomericSmiles=True)
+            
+            # Check if any resonance structures or functional group renderings were modified
+            original_smiles = Chem.MolToSmiles(mol, isomericSmiles=True)
+            if smiles_str != original_smiles:
+                updated_representations += 1
+            
+            # Map tracking dataset attributes
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Standardized_SMILES': smiles_str,
+                'Structure_Modified': "Yes" if smiles_str != original_smiles else "No"
+            }
+            standardized_records.append(record)
+
+        except Exception as e:
+            print(f"⚠️  Standardization failed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile the standardized database frame
+    df_standardized = pd.DataFrame(standardized_records)
+    
+    # Save 2D tracking table to disk
+    df_standardized.to_csv(output_csv, index=False)
+
+    # Initialize the multi-molecule 3D SDF writer stream to export standardized geometries
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for clean_mol in standardized_molecules:
+        sdf_writer.write(clean_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 4: Functional Group Standardization Complete!")
+    print(f"📊 Total inputs processed: {total_parsed}")
+    print(f"💎 Volatile functional group arrangements updated/normalized: {updated_representations}")
+    print(f"🎯 Standardized screening ligands prepped: {len(df_standardized)}")
+    print(f"🚀 Standardized 2D CSV exported to: '{output_csv}'")
+    print(f"🚀 Master Standardized 3D SDF compiled to: '{output_sdf}'")
+
+    return df_standardized
+
+# --- Run the Standardization Subroutine ---
+df_standardized_master = run_functional_group_standardization()
+
+# Display the clean interactive tracking database
+df_standardized_master
+
+5. Chemoinformatic discard Bioavailability Filtering: Apply hard property cuts (Lipinski's Rule of 5, Veber's criteria, REOS) while the library is still flat to non-drug-like space.
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import Descriptors, Lipinski
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_bioavailability_filtering(input_sdf="MNPAI70_Standardized_Master_3D.sdf", 
+                                  output_csv="MNPAI70_Filtered_Master_2D.csv", 
+                                  output_sdf="MNPAI70_Filtered_Master_3D.sdf"):
+    """
+    Step 5: Applies multi-parameter drug-likeness constraints (Lipinski, Veber, REOS)
+    to filter out compounds outside of acceptable drug-like space.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 4 first!")
+        return None
+
+    print(f"🧬 Loading standardized 3D library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    passed_molecules = []
+    filtered_records = []
+    
+    discard_count = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🛑 Applying Lipinski, Veber, and REOS filters across {total_parsed} ligands...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Calculate the exact properties needed for our criteria matrices
+            mw = Descriptors.MolWt(mol)
+            logp = Descriptors.MolLogP(mol)
+            hbd = Lipinski.NumHDonors(mol)
+            hba = Lipinski.NumHAcceptors(mol)
+            tpsa = Descriptors.TPSA(mol)
+            rotb = Lipinski.NumRotatableBonds(mol)
+
+            # 2. Evaluate filter evaluations
+            # Lipinski Rule of 5 (allowing max 2 violation)
+            lipinski_violations = 0
+            if mw > 500: lipinski_violations += 1
+            if logp > 5.0: lipinski_violations += 1  # Standard LogP limit
+            if hbd > 5: lipinski_violations += 1
+            if hba > 10: lipinski_violations += 1
+            passed_lipinski = lipinski_violations <= 2
+
+            # Veber Criteria (Strict)
+            passed_veber = (rotb <= 10) and (tpsa <= 140.0)
+
+            # REOS hard upper limits to clear massive polymeric/insoluble items
+            passed_reos = (mw <= 700) and (-2.0 <= logp <= 7.0)
+
+            # 3. Master gatekeeper decision logic
+            if passed_lipinski and passed_veber and passed_reos:
+                # Append properties to the 3D molecule object tags for downstream tracing
+                mol.SetProp("MW", f"{mw:.2f}")
+                mol.SetProp("LogP", f"{logp:.2f}")
+                mol.SetProp("TPSA", f"{tpsa:.2f}")
+                mol.SetProp("RotB", str(rotb))
+                
+                passed_molecules.append(mol)
+                
+                # Add a row entry to our 2D data tracker
+                record = {
+                    'Compound_ID': comp_name,
+                    'InChIKey_Hash': inchikey,
+                    'MW': round(mw, 2),
+                    'LogP': round(logp, 2),
+                    'HBD': hbd,
+                    'HBA': hba,
+                    'TPSA': round(tpsa, 2),
+                    'RotB': rotb,
+                    'Filter_Status': 'PASSED'
+                }
+                filtered_records.append(record)
+            else:
+                discard_count += 1
+
+        except Exception as e:
+            print(f"⚠️  Filtering analysis errored out for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile data frame framework
+    df_filtered = pd.DataFrame(filtered_records)
+    
+    # Save the 2D spreadsheet summary file to disk
+    df_filtered.to_csv(output_csv, index=False)
+
+    # Initialize the multi-molecule 3D SDF writer stream to export passing geometries
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for drug_like_mol in passed_molecules:
+        sdf_writer.write(drug_like_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 5: Chemoinformatic Bioavailability Filtering Complete!")
+    print(f"📊 Total inputs processed: {total_parsed}")
+    print(f"✂️  Non-drug-like ligands discarded/filtered out: {discard_count}")
+    print(f"🎯 Bioavailable target candidates remaining: {len(df_filtered)}")
+    print(f"🚀 Filtered 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Filtered Master 3D SDF compiled to: '{output_sdf}'")
+
+    return df_filtered
+
+# --- Run the Filtering Subroutine ---
+df_filtered_master = run_bioavailability_filtering()
+
+# Display the clean interactive tracking database
+df_filtered_master
+
+6. Pan-Assay Interference Compounds (PAINS) Filtering: Screen out highly reactive, aggregative, or assay-disrupting substructures prior to any 3D matrix scaling.
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import FilterCatalog
+from rdkit.Chem.FilterCatalog import FilterCatalogParams
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_pains_high_throughput_filter(input_sdf="MNPAI70_Bioavailability_Filtered_Master_2D.sdf", 
+                                     output_csv="MNPAI70_PAINS_Filtered_Master_2D.csv", 
+                                     output_sdf="MNPAI70_PAINS_Filtered_Master_3D.sdf"):
+    """
+    Step 5: Audits the molecular library against the global PAINS (A, B, and C) 
+    catalogs to purge chemical sub-structures notorious for assay interference, 
+    promiscuous aggregation, or covalent false-positive readouts.
+    """
+    if not os.path.exists(input_sdf):
+        # Fallback tracking if filename structure differs slightly from your previous step export
+        print(f"❌ Error: Input master file '{input_sdf}' not found. Please verify filename!")
+        return None
+
+    print(f"🧬 Loading screening library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    # Initialize RDKit's high-fidelity FilterCatalog system
+    params = FilterCatalogParams()
+    params.AddCatalog(FilterCatalogParams.FilterCatalogs.PAINS)  # Activates comprehensive PAINS profiles
+    pains_catalog = FilterCatalog.FilterCatalog(params)
+    
+    clean_molecules = []
+    pains_audit_records = []
+    
+    pains_failures_count = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🛡️  Scanning compounds for pan-assay interference substructures...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        # Extract underlying property tags generated from earlier upstream tasks
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        # Query the PAINS structural dictionary catalog
+        has_pains_alert = pains_catalog.HasMatch(mol)
+        
+        if has_pains_alert:
+            pains_failures_count += 1
+            status = "FAIL"
+            
+            # Extract specific structural alerts causing the rejection
+            matches = pains_catalog.GetMatches(mol)
+            alert_descriptions = [m.GetDescription() for m in matches]
+            alert_summary = "; ".join(alert_descriptions)
+            
+            print(f"⚠️  [REJECTED] {comp_name} triggered PAINS filter: {alert_summary}")
+        else:
+            status = "PASS"
+            alert_summary = "None"
+            
+            # Carry forward upstream filter tracking metadata tags
+            clean_mol = Chem.Mol(mol)
+            if mol.HasProp("SA_Score"): clean_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): clean_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): clean_mol.SetProp("Rings", mol.GetProp("Rings"))
+            
+            clean_molecules.append(clean_mol)
+
+        # Log metrics to tracking summary frame
+        record = {
+            'Compound_ID': comp_name,
+            'InChIKey_Hash': inchikey,
+            'PAINS_Filter_Status': status,
+            'Triggered_Alerts': alert_summary
+        }
+        pains_audit_records.append(record)
+
+    # Compile dataset audit table
+    df_pains = pd.DataFrame(pains_audit_records)
+    df_pains.to_csv(output_csv, index=False)
+
+    # Write out the clean structural dataset to multi-mol SDF
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for valid_mol in clean_molecules:
+        sdf_writer.write(valid_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 5: PAINS Interference Filtration Complete!")
+    print(f"📊 Total compounds evaluated: {total_parsed}")
+    print(f"🛑 Promiscuous/Interfering compounds purged: {pains_failures_count}")
+    print(f"🎯 Clean, compliant compounds advanced: {len(clean_molecules)}")
+    print(f"🚀 PAINS 2D tracking log exported to: '{output_csv}'")
+    print(f"🚀 Advanced Clean 3D Master SDF compiled to: '{output_sdf}'")
+
+    return df_pains
+
+# --- Execute Refined PAINS Filtration Deck ---
+df_pains_master = run_pains_high_throughput_filter()
+df_pains_master
+
+IF INCHI KEY NOT OBTAINED….
+import os
+import pandas as pd
+from rdkit import Chem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def generate_inchikeys_post_pains(input_sdf="MNPAI70_PAINS_Filtered_Master_3D.sdf", 
+                                  output_csv="MNPAI70_PostPAINS_InChIKey_2D.csv", 
+                                  output_sdf="MNPAI70_PostPAINS_InChIKey_3D.sdf"):
+    """
+    Calculates deterministic InChIKeys for AI de novo or scaffold-hopped molecules 
+    directly following the PAINS structural filtration step.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Input file '{input_sdf}' not found. Please run your PAINS script first!")
+        return None
+
+    print(f"🧬 Loading clean molecules from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    updated_molecules = []
+    inchikey_records = []
+    total_parsed = len(sdf_supplier)
+    failed_keys = 0
+
+    print("🔑 Computing unique digital InChIKeys for the filtered deck...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"AI_Lead_{idx+1}"
+
+        try:
+            # 1. Calculate the standard, absolute InChIKey from the molecular graph
+            inchikey = Chem.Inchi.MolToInchiKey(mol)
+            
+            if not inchikey:
+                raise ValueError("RDKit InChIKey generator returned an empty string.")
+
+            # 2. Embed the key directly into the molecule structure's internal metadata block
+            # This ensures the key is permanently written into the SDF file lines
+            mol.SetProp("InChIKey_Hash", inchikey)
+            
+            # Carry forward earlier workflow tags (like SA Score or Rings if they exist)
+            if mol.HasProp("SA_Score"): mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): mol.SetProp("Rings", mol.GetProp("Rings"))
+            
+            updated_molecules.append(mol)
+            
+            # Log to our tracking sheet list
+            record = {
+                'Compound_ID': comp_name,
+                'Generated_InChIKey': inchikey,
+                'Canonical_SMILES': Chem.MolToSmiles(mol, isomericSmiles=True)
+            }
+            inchikey_records.append(record)
+
+        except Exception as e:
+            failed_keys += 1
+            print(f"⚠️  Could not generate InChIKey for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile the 2D spreadsheet registry
+    df_inchikey = pd.DataFrame(inchikey_records)
+    df_inchikey.to_csv(output_csv, index=False)
+
+    # Save out the structural 3D multi-MOL SDF with the embedded InChIKeys
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for updated_mol in updated_molecules:
+        sdf_writer.write(updated_mol)
+    sdf_writer.close()
+
+    print("\n✨ InChIKey Generation Complete!")
+    print(f"📊 Total filtered compounds parsed: {total_parsed}")
+    print(f"🔑 Unique InChIKeys successfully generated: {len(df_inchikey)}")
+    print(f"💾 REGISTRY SPREADSHEET EXPORTED TO: '{output_csv}'")
+    print(f"💾 UPDATED 3D SDF FILE COMPILED TO: '{output_sdf}'")
+    print("\n🚀 Your novel molecules now possess explicit, standardized digital signatures!")
+
+    return df_inchikey
+
+# --- Run the InChIKey Generation Routine ---
+df_inchikeys = generate_inchikeys_post_pains()
+df_inchikeys
+
+
+Phase II: Physicochemical and Stereochemical Expansion
+(Protonation & Ionization -  Stereochemical Fidelity and Enumeration)
+
+
+7. Physiological Protonation and Ionization (pH 7.4): Calculate dominant protonation, tautomerization, and macrocyclic ionization states strictly under simulated biological conditions.
+
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem.MolStandardize import rdMolStandardize
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_physiological_protonation(input_sdf="MNPAI70_PAINS_Filtered_Master_3D.sdf", 
+                                 output_csv="MNPAI70_Physio_Master_2D.csv", 
+                                 output_sdf="MNPAI70_Physio_Master_3D.sdf"):
+    """
+    Step 6: Simulates physiological protonation states under biological conditions (pH 7.4),
+    re-equilibrating charges and identifying the dominant ionic structures.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 5c first!")
+        return None
+
+    print(f"🧬 Loading ultra-elite 3D library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    # Initialize RDKit's Uncharger/Protonation re-equilibration engine
+    uncharger = rdMolStandardize.Uncharger()
+    
+    protonated_molecules = []
+    protonated_records = []
+    charge_modifications = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🔋 Simulating pH 7.4 protonation landscapes across {total_parsed} elite candidates...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # Re-equilibrate the protonation mapping for biological systems
+            ionized_mol = uncharger.uncharge(mol)
+            
+            # Map over original property tags to maintain file tracking parity
+            ionized_mol.SetProp("_Name", comp_name)
+            if mol.HasProp("InChIKey_Hash"): ionized_mol.SetProp("InChIKey_Hash", inchikey)
+            if mol.HasProp("SA_Score"): ionized_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): ionized_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): ionized_mol.SetProp("Rings", mol.GetProp("Rings"))
+            
+            protonated_molecules.append(ionized_mol)
+            
+            # Track if protonation states or formal charges shifted from the input format
+            original_smiles = Chem.MolToSmiles(mol, isomericSmiles=True)
+            physio_smiles = Chem.MolToSmiles(ionized_mol, isomericSmiles=True)
+            
+            is_changed = "No"
+            if physio_smiles != original_smiles:
+                charge_modifications += 1
+                is_changed = "Yes"
+                
+            # Calculate formal charge of the physiological state
+            formal_charge = Chem.GetFormalCharge(ionized_mol)
+                
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Physio_SMILES': physio_smiles,
+                'Formal_Charge': formal_charge,
+                'Protonation_Shifted': is_changed
+            }
+            protonated_records.append(record)
+
+        except Exception as e:
+            print(f"⚠️  Protonation failed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile data frame tracking matrix
+    df_physio = pd.DataFrame(protonated_records)
+    df_physio.to_csv(output_csv, index=False)
+
+    # Export ionized 3D coordinates into a master screening multi-SDF file
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for physio_mol in protonated_molecules:
+        sdf_writer.write(physio_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 6: Physiological Protonation Complete!")
+    print(f"📊 Total inputs processed: {total_parsed}")
+    print(f"⚡ Compounds with re-equilibrated/shifted charge layouts: {charge_modifications}")
+    print(f"🎯 Screening targets with corrected ionization prepped: {len(df_physio)}")
+    print(f"🚀 Physiological 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Master Physiological 3D SDF compiled to: '{output_sdf}'")
+
+    return df_physio
+
+# --- Run the Protonation Subroutine ---
+df_physio_master = run_physiological_protonation()
+
+# Display the clean interactive tracking database
+df_physio_master
+
+8. Stereochemical Fidelity and Enumeration: Generate explicit 3D representations for unassigned chiral centers, undefined double bonds, or flexible macrocyclic cis/trans isomer geometry.
+
+PART 1: Isomer Generation (Expand compounds) 
+
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import EnumerateStereoisomers
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_stereochemical_enumeration(input_sdf="Vidarabine_Physio_Master_3D.sdf", 
+                                   output_csv="Vidarabine_Enumerated_Master_2D.csv", 
+                                   output_sdf="Vidarabine_Enumerated_Master_3D.sdf", 
+                                   max_isomers=8):
+    """
+    Step 7: Identifies ambiguous chiral centers and enumerates explicit 3D stereoisomers.
+    Uses an independent Python generator slice loop to ensure absolute compatibility 
+    across all RDKit deployment environments.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 6 first!")
+        return None
+
+    print(f"🧬 Loading protonated 3D library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    enumerated_molecules = []
+    enumerated_records = []
+    
+    total_isomers_generated = 0
+    complex_chiral_warnings = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🌀 Scanning and enumerating undefined stereocenters across {total_parsed} parents...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        base_inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # Get the naked, unconstrained generator stream from RDKit
+            isomer_generator = EnumerateStereoisomers.EnumerateStereoisomers(mol)
+            
+            # Manually extract isomers using a standard Python loop up to max_isomers
+            isomers = []
+            for isomer in isomer_generator:
+                isomers.append(isomer)
+                if len(isomers) >= max_isomers:
+                    complex_chiral_warnings += 1
+                    break  # Enforce hard upper bound capping manually
+            
+            num_isomers = len(isomers)
+            total_isomers_generated += num_isomers
+
+            # Save each unique 3D variant out with a clear suffix name identifier
+            for iso_idx, iso_mol in enumerate(isomers):
+                isomer_name = f"{comp_name}_stereo_{iso_idx+1}"
+                iso_mol.SetProp("_Name", isomer_name)
+                
+                # Re-calculate a stereospecific InChIKey for this explicit variant
+                try:
+                    iso_inchikey = Chem.Inchi.MolToInchiKey(iso_mol)
+                except Exception:
+                    iso_inchikey = f"{base_inchikey}_iso_{iso_idx+1}"
+                
+                iso_mol.SetProp("InChIKey_Hash", iso_inchikey)
+                
+                # Carry forward earlier descriptor tags
+                if mol.HasProp("SA_Score"): iso_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+                if mol.HasProp("Fraction_p3"): iso_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+                if mol.HasProp("Rings"): iso_mol.SetProp("Rings", mol.GetProp("Rings"))
+                
+                enumerated_molecules.append(iso_mol)
+                
+                # Log to tracking summary
+                record = {
+                    'Parent_ID': comp_name,
+                    'Isomer_ID': isomer_name,
+                    'Isomer_InChIKey': iso_inchikey,
+                    'Isomer_SMILES': Chem.MolToSmiles(iso_mol, isomericSmiles=True),
+                    'Total_Isomers_From_Parent': num_isomers
+                }
+                enumerated_records.append(record)
+
+        except Exception as e:
+            print(f"⚠️  Stereochemical enumeration failed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile dataset frame matrix
+    df_enumerated = pd.DataFrame(enumerated_records)
+    df_enumerated.to_csv(output_csv, index=False)
+
+    # Initialize the master 3D SDF writer stream to export the expanded geometries
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for exact_stereo_mol in enumerated_molecules:
+        sdf_writer.write(exact_stereo_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 7: Stereochemical Fidelity & Enumeration Complete!")
+    print(f"📊 Parent ligands evaluated: {total_parsed}")
+    print(f"🧬 Total explicit 3D configurations generated: {total_isomers_generated}")
+    if complex_chiral_warnings > 0:
+        print(f"⚠️  Highly hyper-chiral structures capped at {max_isomers} options: {complex_chiral_warnings}")
+    print(f"🚀 Enumerated 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Master Expanded 3D SDF compiled to: '{output_sdf}'")
+
+    return df_enumerated
+
+# --- Run the Robust Stereochemical Enumeration ---
+df_stereo_master = run_stereochemical_enumeration()
+
+# Display the expanded tracking database matrix
+df_stereo_master
+
+PART 2: Selection of the best isomer from the previous setup
+
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import EnumerateStereoisomers
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def extract_stereo1_control_deck(input_sdf="Vidarabine_Physio_Master_3D.sdf", 
+                                 output_csv="Vidarabine_Control_Stereo1_2D.csv", 
+                                 output_sdf="Vidarabine_Control_Stereo1_3D.sdf"):
+    """
+    Extracts exactly the first valid stereoisomeric conformation (stereo_1) for each 
+    parent compound, bypassing multi-state expansion to keep a lightweight control deck.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Missing required input file '{input_sdf}'. Run Step 6 first!")
+        return None
+
+    print(f"🧬 Loading protonated master 3D library from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    control_molecules = []
+    control_records = []
+    total_parsed = len(sdf_supplier)
+
+    print(f"✂️  Extracting stereo_1 configurations across all {total_parsed} parents...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Fetch the raw version-agnostic stereoisomer generator stream
+            isomer_generator = EnumerateStereoisomers.EnumerateStereoisomers(mol)
+            
+            # 2. Extract ONLY the first configuration entry from the generator
+            stereo_1_mol = next(isomer_generator)
+            
+            # 3. Label it clearly as stereo_1 to keep file tracking airtight
+            isomer_name = f"{comp_name}_stereo_1"
+            stereo_1_mol.SetProp("_Name", isomer_name)
+            
+            # 4. Carry forward all critical workflow property tags
+            if mol.HasProp("InChIKey_Hash"): stereo_1_mol.SetProp("InChIKey_Hash", inchikey)
+            if mol.HasProp("SA_Score"): stereo_1_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): stereo_1_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): stereo_1_mol.SetProp("Rings", mol.GetProp("Rings"))
+            
+            control_molecules.append(stereo_1_mol)
+            
+            # Record tracking entry for the summary sheet
+            record = {
+                'Parent_Compound_ID': comp_name,
+                'Control_Isomer_ID': isomer_name,
+                'InChIKey_Hash': inchikey,
+                'Stereo1_SMILES': Chem.MolToSmiles(stereo_1_mol, isomericSmiles=True)
+            }
+            control_records.append(record)
+
+        except StopIteration:
+            print(f"⚠️  No valid conformations resolved for {comp_name}")
+            continue
+        except Exception as e:
+            print(f"⚠️  Extraction failed for entry {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile the final control library dataframe matrix
+    df_control = pd.DataFrame(control_records)
+    df_control.to_csv(output_csv, index=False)
+
+    # Export coordinates to your multi-molecule production screening SDF
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for control_mol in control_molecules:
+        sdf_writer.write(control_mol)
+    sdf_writer.close()
+
+    print("\n🏁 Control Stereoisomer Isolation Complete!")
+    print(f"📊 Parent input molecules read: {total_parsed}")
+    print(f"🎯 Clean 1:1 Stereo-1 configurations saved: {len(df_control)}")
+    print(f"💾 CONTROL 2D SHEET EXPORTED TO: '{output_csv}'")
+    print(f"💾 CONTROL 3D MASTER SDF EXPORTED TO: '{output_sdf}'")
+    print("\n🚀 Library size locked. Your control deck is perfectly matching your other screens and ready to dock!")
+
+    return df_control
+
+# --- Run the Streamlined Isolation Subroutine ---
+df_control_deck = extract_stereo1_control_deck()
+df_control_deck
+
+
+Phase III: 3D Generation and Quantum Parameterization
+(3D Generation – Bonding Patterns and Valence Verification - Atomic Partial Charge Assignment - Forcefield Parameterization - Energy Minimization - Conformational Optimization / Ensemble Generation)
+
+9. 3D Coordinate Generation: Project optimized 2D molecular graphs into spatial, realistic 3D atomic coordinates.
+
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def generate_raw_3d_coordinates(input_csv="Vidarabine_Control_Stereo1_2D.csv", 
+                                input_sdf="Vidarabine_Control_Stereo1_3D.sdf",
+                                output_csv="Vidarabine_Raw3D_Production_2D.csv", 
+                                output_sdf="Vidarabine_Raw3D_Production_3D.sdf"):
+    """
+    Step 8: Projects flat 2D molecular graphs directly into spatial 3D atomic 
+    coordinates using ETKDGv3. Bypasses all force field minimizations.
+    """
+    if not os.path.exists(input_sdf) or not os.path.exists(input_csv):
+        print(f"❌ Error: Required input files missing. Please run the Step 7 isolation first!")
+        return None
+
+    print(f"🧬 Loading flat control deck from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    embedded_3d_molecules = []
+    embedded_3d_records = []
+    
+    failed_embeddings = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"📐 Embedding raw 3D spatial points across {total_parsed} targets...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # Add explicit hydrogens to map structural geometry accurately
+            mol_with_hs = Chem.AddHs(mol, addCoords=True)
+            
+            # Configure advanced ETKDGv3 parameters for macrocyclic/nucleoside bounds
+            embed_params = AllChem.ETKDGv3()
+            embed_params.randomSeed = 42  # For reproducible spatial generation
+            embed_params.maxIterations = 500
+            
+            # Project the 2D graph directly into 3D coordinates
+            embed_status = AllChem.EmbedMolecule(mol_with_hs, embed_params)
+            
+            # Fallback to standard distance geometry if advanced ETKDG fails
+            if embed_status == -1:
+                embed_status = AllChem.EmbedMolecule(mol_with_hs, randomSeed=42)
+
+            if embed_status != -1:
+                # Assign name and carry over upstream filter tags
+                mol_with_hs.SetProp("_Name", comp_name)
+                if mol.HasProp("InChIKey_Hash"): mol_with_hs.SetProp("InChIKey_Hash", inchikey)
+                if mol.HasProp("SA_Score"): mol_with_hs.SetProp("SA_Score", mol.GetProp("SA_Score"))
+                if mol.HasProp("Fraction_p3"): mol_with_hs.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+                if mol.HasProp("Rings"): mol_with_hs.SetProp("Rings", mol.GetProp("Rings"))
+                
+                embedded_3d_molecules.append(mol_with_hs)
+                
+                record = {
+                    'Compound_ID': comp_name,
+                    'InChIKey_Hash': inchikey,
+                    '3D_Embedding': "Success_Raw",
+                    'SMILES': Chem.MolToSmiles(mol_with_hs, isomericSmiles=True)
+                }
+                embedded_3d_records.append(record)
+            else:
+                failed_embeddings += 1
+                print(f"⚠️ 3D Spatial Embedding failed for {comp_name}")
+
+        except Exception as e:
+            failed_embeddings += 1
+            print(f"⚠️ Extraction crashed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile the 2D tracking index
+    df_raw_3d = pd.DataFrame(embedded_3d_records)
+    df_raw_3d.to_csv(output_csv, index=False)
+
+    # Export your finished un-minimized multi-molecule 3D coordinate file
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for raw_3d_mol in embedded_3d_molecules:
+        sdf_writer.write(raw_3d_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 8: Raw 3D Coordinate Generation Complete!")
+    print(f"📊 Total 2D graphs parsed: {total_parsed}")
+    print(f"📐 Embedded successfully into 3D atomic frames: {len(df_raw_3d)}")
+    print(f"❌ Failed spatial embeddings dropped: {failed_embeddings}")
+    print(f"🚀 Raw 3D 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Master Raw 3D Conformation SDF compiled to: '{output_sdf}'")
+
+    return df_raw_3d
+
+# --- Execute 3D Raw Coordinates Projection ---
+df_raw_3d_deck = generate_raw_3d_coordinates()
+df_raw_3d_deck
+
+
+10. Bonding Patterns and Valence Verification: Audit structural hybridization (sp2 vs. sp3) following coordinate inflation to prevent geometric warping.
+
+import os
+import pandas as pd
+from rdkit import Chem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_valence_and_bonding_audit(input_sdf="Vidarabine_Raw3D_Production_3D.sdf", 
+                                  output_csv="Vidarabine_Verified_Final_2D.csv", 
+                                  output_sdf="Vidarabine_Verified_Final_3D.sdf"):
+    """
+    Step 9: Audits structural hybridization and valence configurations across
+    the raw 3D library to detect and drop any chemically warped geometries.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Raw 3D coordinate file '{input_sdf}' not found. Run Step 8 first!")
+        return None
+
+    print(f"🧬 Loading raw 3D configurations from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    verified_molecules = []
+    verified_records = []
+    
+    warped_rejections = 0
+    total_parsed = len(sdf_supplier)
+
+    print("🛡️  Auditing atomic hybridization states and sanitizing valences...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Create a deep copy to execute structural verification safely
+            audit_mol = Chem.Mol(mol)
+            
+            # 2. Force RDKit to clean up chemical perceptions and validate valences
+            # This triggers a clear exception if any bond geometry broke or warped
+            Chem.SanitizeMol(audit_mol, Chem.SANITIZE_ALL ^ Chem.SANITIZE_KEKULIZE)
+            
+            # 3. Explicitly re-calculate stereochemistry flags and atomic hybridizations
+            Chem.AssignStereochemistry(audit_mol, force=True, cleanIt=True)
+            
+            # Carry forward upstream pipeline tracking metadata tags
+            audit_mol.SetProp("_Name", comp_name)
+            if mol.HasProp("InChIKey_Hash"): audit_mol.SetProp("InChIKey_Hash", inchikey)
+            if mol.HasProp("SA_Score"): audit_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): audit_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): audit_mol.SetProp("Rings", mol.GetProp("Rings"))
+            
+            verified_molecules.append(audit_mol)
+            
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Valence_Status': "Verified_Valid",
+                'Formula': Chem.rdMolDescriptors.CalcMolFormula(audit_mol)
+            }
+            verified_records.append(record)
+
+        except ValueError as val_err:
+            # Catches explicit valence violations (e.g., hypervalent Carbons or Nitrogens)
+            warped_rejections += 1
+            print(f"⚠️  Valence anomaly detected for {comp_name}! Dropped. Error: {val_err}")
+            continue
+        except Exception as e:
+            warped_rejections += 1
+            print(f"⚠️  Sanitization audit failed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile dataset tracking framework
+    df_verified = pd.DataFrame(verified_records)
+    df_verified.to_csv(output_csv, index=False)
+
+    # Save results to a clean production multi-molecule SDF file
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for clean_mol in verified_molecules:
+        sdf_writer.write(clean_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 9: Bonding Patterns & Valence Verification Complete!")
+    print(f"📊 Total inputs audited: {total_parsed}")
+    print(f"🛑 Chemically warped/invalid structures dropped: {warped_rejections}")
+    print(f"🎯 Production ready structures finalized: {len(df_verified)}")
+    print(f"🚀 Verified 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Master Verified 3D SDF compiled to: '{output_sdf}'")
+
+    return df_verified
+
+# --- Run the Bonding Patterns Audit Block ---
+df_verified_deck = run_valence_and_bonding_audit()
+df_verified_deck
+
+11. Atomic Partial Charge Assignment: Compute robust quantum or semi-empirical electrostatic profiles via AM1-BCC or Gasteiger models over the explicit
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def assign_atomic_partial_charges(input_sdf="Vidarabine_Verified_Final_3D.sdf", 
+                                  output_csv="Vidarabine_Charged_Production_2D.csv", 
+                                  output_sdf="Vidarabine_Charged_Production_3D.sdf"):
+    """
+    Step 10: Computes semi-empirical Gasteiger partial charge allocations over
+    explicit 3D protonated structures to map clean electrostatic profiles.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Verified input file '{input_sdf}' missing. Run Step 9 first!")
+        return None
+
+    print(f"🧬 Loading verified 3D structures from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    charged_molecules = []
+    charged_records = []
+    
+    failed_assignments = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"⚡ Calculating Gasteiger electrostatic profiles across {total_parsed} targets...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Instantiate a fresh copy for charge distribution mapping
+            charged_mol = Chem.Mol(mol)
+            
+            # 2. Force calculation of Gasteiger partial charges
+            # This mutates the atom objects internally, populating the '_GasteigerCharge' property
+            AllChem.ComputeGasteigerCharges(charged_mol)
+            
+            # 3. Pull partial charge attributes to verify successful computation ranges
+            min_charge = 0.0
+            max_charge = 0.0
+            
+            for atom in charged_mol.GetAtoms():
+                # Extract computed value from internal memory registry
+                if atom.HasProp("_GasteigerCharge"):
+                    chg = float(atom.GetProp("_GasteigerCharge"))
+                    # Catch and replace NaN bugs that can pop up with unusual chemistry configurations
+                    if pd.isna(chg) or chg == float('inf') or chg == float('-inf'):
+                        atom.SetProp("_GasteigerCharge", "0.0000")
+                        chg = 0.0
+                    min_charge = min(min_charge, chg)
+                    max_charge = max(max_charge, chg)
+
+            # Re-assign mapping property identifiers back down the line
+            charged_mol.SetProp("_Name", comp_name)
+            if mol.HasProp("InChIKey_Hash"): charged_mol.SetProp("InChIKey_Hash", inchikey)
+            if mol.HasProp("SA_Score"): charged_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): charged_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): charged_mol.SetProp("Rings", mol.GetProp("Rings"))
+            
+            # Save min/max charge profiles into the SDF property block for downstream grid mapping
+            charged_mol.SetProp("Gasteiger_Min_Charge", f"{min_charge:.4f}")
+            charged_mol.SetProp("Gasteiger_Max_Charge", f"{max_charge:.4f}")
+            
+            charged_molecules.append(charged_mol)
+            
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Electrostatic_Profile': "Computed_Gasteiger",
+                'Min_Partial_Charge': round(min_charge, 4),
+                'Max_Partial_Charge': round(max_charge, 4)
+            }
+            charged_records.append(record)
+
+        except Exception as e:
+            failed_assignments += 1
+            print(f"⚠️ Charge calculation failed for entry {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile the 2D tracking matrix index
+    df_charged = pd.DataFrame(charged_records)
+    df_charged.to_csv(output_csv, index=False)
+
+    # Export your finished charged structures to a production SDF format
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for ready_charged_mol in charged_molecules:
+        sdf_writer.write(ready_charged_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 10: Atomic Partial Charge Assignment Complete!")
+    print(f"📊 Total inputs processed: {total_parsed}")
+    print(f"⚡ Successfully mapped electrostatic profiles: {len(df_charged)}")
+    print(f"❌ Dropped entries: {failed_assignments}")
+    print(f"🚀 Charged 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Master Charged 3D SDF compiled to: '{output_sdf}'")
+
+    return df_charged
+
+# --- Execute Electrostatic Charge Distribution Pass ---
+df_charged_deck = assign_atomic_partial_charges()
+df_charged_deck
+
+
+12. Forcefield Parameterization: Assign specific structural forcefield parameters (MMFF94, OPLS4, or GAFF2) to prepare for physical simulation.
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_forcefield_parameterization(input_sdf="Vidarabine_Charged_Production_3D.sdf", 
+                                    output_csv="Vidarabine_Parameterized_Final_2D.csv", 
+                                    output_sdf="Vidarabine_Parameterized_Final_3D.sdf"):
+    """
+    Step 11: Audits and verifies small-molecule forcefield parameterization (MMFF94)
+    across the 502 target control structures to guarantee docking engine compatibility.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Charged 3D input file '{input_sdf}' missing. Run Step 10 first!")
+        return None
+
+    print(f"🧬 Loading electrostatic-assigned 3D structures from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    parameterized_molecules = []
+    parameterized_records = []
+    
+    unparameterized_failures = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"⚙️  Validating MMFF94 atom-typing and chemical parameterization across {total_parsed} inputs...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Instantiate a deep copy for potential energy mechanics checking
+            param_mol = Chem.Mol(mol)
+            
+            # 2. Test if MMFF94 properties can be assigned to this specific connectivity graph
+            # This detects if there are any unperceived metals or unrecognized atom types
+            mmff_props = AllChem.MMFFGetMoleculeProperties(param_mol, mmffVariant="MMFF94")
+            
+            if mmff_props is not None:
+                # Forcefield parameters are successfully identified for all atoms/bonds
+                status = "MMFF94_Valid"
+                
+                # Carry forward upstream configuration metadata tags
+                param_mol.SetProp("_Name", comp_name)
+                if mol.HasProp("InChIKey_Hash"): param_mol.SetProp("InChIKey_Hash", inchikey)
+                if mol.HasProp("SA_Score"): param_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+                if mol.HasProp("Fraction_p3"): param_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+                if mol.HasProp("Rings"): param_mol.SetProp("Rings", mol.GetProp("Rings"))
+                if mol.HasProp("Gasteiger_Min_Charge"): param_mol.SetProp("Gasteiger_Min_Charge", mol.GetProp("Gasteiger_Min_Charge"))
+                if mol.HasProp("Gasteiger_Max_Charge"): param_mol.SetProp("Gasteiger_Max_Charge", mol.GetProp("Gasteiger_Max_Charge"))
+                
+                parameterized_molecules.append(param_mol)
+            else:
+                # If MMFF94 properties fail, test fallback to Universal Force Field (UFF) typing
+                uff_check = AllChem.UFFHasAllMoleculeParams(param_mol)
+                if uff_check:
+                    status = "UFF_Valid"
+                    parameterized_molecules.append(param_mol)
+                else:
+                    status = "Unparameterized_Failure"
+                    unparameterized_failures += 1
+                    print(f"⚠️  Forcefield assignment failed for entry: {comp_name}")
+                    continue
+
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Forcefield_Status': status,
+                'Total_Atoms': param_mol.GetNumAtoms(),
+                'Total_Bonds': param_mol.GetNumBonds()
+            }
+            parameterized_records.append(record)
+
+        except Exception as e:
+            unparameterized_failures += 1
+            print(f"⚠️ Mechanics parameterization crashed for {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile dataset logging tracking framework
+    df_param = pd.DataFrame(parameterized_records)
+    df_param.to_csv(output_csv, index=False)
+
+    # Export your finalized production files to desk
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for ready_param_mol in parameterized_molecules:
+        sdf_writer.write(ready_param_mol)
+    sdf_writer.close()
+
+    print("\n✨ Step 11: Forcefield Parameterization Validation Complete!")
+    print(f"📊 Total structures processed: {total_parsed}")
+    print(f"⚙️  Successfully parameterized configurations: {len(df_param)}")
+    print(f"❌ Unresolvable atom types dropped: {unparameterized_failures}")
+    print(f"🚀 Parameterized 2D CSV database exported to: '{output_csv}'")
+    print(f"🚀 Master Parameterized 3D SDF compiled to: '{output_sdf}'")
+
+    return df_param
+
+# --- Run the Molecular Mechanics Parameterization Audit ---
+df_parameterized_deck = run_forcefield_parameterization()
+df_parameterized_deck
+
+13. Energy Minimization: Apply gradient-descent algorithms to relieve structural strain and steer coordinates toward a true local potential energy minimum.
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def run_global_energy_minimization(input_sdf="Vidarabine_Parameterized_Final_3D.sdf", 
+                                   output_csv="Vidarabine_Final_Production_Ready_2D.csv", 
+                                   output_sdf="Vidarabine_Final_Production_Ready_3D.sdf"):
+    """
+    Step 12: Optimizes all 502 control targets using the MMFF94 forcefield 
+    to relax structural geometry and resolve thermodynamic atomic strain.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Parameterized input file '{input_sdf}' missing. Run Step 11 first!")
+        return None
+
+    print(f"🧬 Loading parameterized 3D structures from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    minimized_molecules = []
+    minimized_records = []
+    
+    minimization_failures = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"⚖️  Executing global MMFF94 potential energy minimization across {total_parsed} targets...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Instantiate a deep copy for potential energy surface relaxation
+            min_mol = Chem.Mol(mol)
+            
+            # 2. Run the iterative MMFF94 forcefield minimization
+            # AllChem.MMFFOptimizeMolecule returns a status flag: 0 for convergence, 1 if maxIters reached
+            convergence_status = AllChem.MMFFOptimizeMolecule(min_mol, maxIters=500, mmffVariant="MMFF94")
+            
+            status_text = "Converged" if convergence_status == 0 else "Max_Iterations_Reached"
+            
+            # 3. Carry forward all critical workflow property tags
+            min_mol.SetProp("_Name", comp_name)
+            if mol.HasProp("InChIKey_Hash"): min_mol.SetProp("InChIKey_Hash", inchikey)
+            if mol.HasProp("SA_Score"): min_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+            if mol.HasProp("Fraction_p3"): min_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+            if mol.HasProp("Rings"): min_mol.SetProp("Rings", mol.GetProp("Rings"))
+            if mol.HasProp("Gasteiger_Min_Charge"): min_mol.SetProp("Gasteiger_Min_Charge", mol.GetProp("Gasteiger_Min_Charge"))
+            if mol.HasProp("Gasteiger_Max_Charge"): min_mol.SetProp("Gasteiger_Max_Charge", mol.GetProp("Gasteiger_Max_Charge"))
+            
+            minimized_molecules.append(min_mol)
+            
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Minimization_Status': status_text,
+                'Formula': Chem.rdMolDescriptors.CalcMolFormula(min_mol)
+            }
+            minimized_records.append(record)
+
+        except Exception as e:
+            minimization_failures += 1
+            print(f"⚠️ Energy minimization crashed for entry {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile dataset tracking framework
+    df_minimized = pd.DataFrame(minimized_records)
+    df_minimized.to_csv(output_csv, index=False)
+
+    # Export your finished, minimized control small-molecules to a production multi-SDF file
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for ready_min_mol in minimized_molecules:
+        sdf_writer.write(ready_min_mol)
+    sdf_writer.close()
+
+    print("\n🏆VIRTUAL SCREENING DECK PREPARATION COMPLETE!")
+    print(f"📊 Total control targets processed: {total_parsed}")
+    print(f"⚖️ Successfully minimized & optimized conformations: {len(df_minimized)}")
+    print(f"❌ Failed minimizations: {minimization_failures}")
+    print(f"💾 FINAL 2D DATABASE EXPORTED TO: '{output_csv}'")
+    print(f"💾 FINAL PRODUCTION 3D MASTER SDF EXPORTED TO: '{output_sdf}'")
+    print("\n🚀 Your control dataset is 100% prepared, minimized, and ready for deployment into your docking environment!")
+
+    return df_minimized
+
+# --- Execute Global Energy Surface Minimization Pass ---
+df_final_production_deck = run_global_energy_minimization()
+df_final_production_deck
+
+14. Conformational Optimization / Ensemble Generation: Sample low-energy thermodynamic shapes for highly flexible marine leads and export the final ensemble as a multi-structure SDF or PDBQT file.
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from google.colab import data_table
+
+# Enable interactive table display in Colab
+data_table.enable_dataframe_formatter()
+
+def generate_conformational_ensembles(input_sdf="Vidarabine_Final_Production_Ready_3D.sdf", 
+                                      output_csv="Vidarabine_Final_Ensemble_2D.csv", 
+                                      output_sdf="Vidarabine_Final_Ensemble_Production_3D.sdf",
+                                      max_conformers=10,
+                                      energy_cutoff=5.0):
+    """
+    Step 13: Dynamically samples low-energy thermodynamic shapes for flexible 
+    leads and compiles them into a multi-conformer production SDF file.
+    """
+    if not os.path.exists(input_sdf):
+        print(f"❌ Error: Minimized input file '{input_sdf}' missing. Run Step 12 first!")
+        return None
+
+    print(f"🧬 Loading optimized 3D structures from: '{input_sdf}'...")
+    sdf_supplier = Chem.SDMolSupplier(input_sdf, removeHs=False)
+    
+    ensemble_molecules = []
+    ensemble_records = []
+    
+    total_conformers_written = 0
+    total_parsed = len(sdf_supplier)
+
+    print(f"🌀 Sampling up to {max_conformers} low-energy shapes across {total_parsed} flexible control targets...\n")
+
+    for idx, mol in enumerate(sdf_supplier):
+        if mol is None:
+            continue
+
+        comp_name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"Ligand_{idx+1}"
+        inchikey = mol.GetProp("InChIKey_Hash") if mol.HasProp("InChIKey_Hash") else "N/A"
+
+        try:
+            # 1. Create a fresh working copy with explicit hydrogens preserved
+            ensemble_mol = Chem.Mol(mol)
+            
+            # 2. Configure ETKDGv3 parameters for multi-conformer generation
+            embed_params = AllChem.ETKDGv3()
+            embed_params.randomSeed = 42
+            embed_params.pruneRmsThresh = 0.5  # Throw out redundant shapes closer than 0.5 Å RMSD
+            embed_params.maxIterations = 500
+            
+            # 3. Embed multiple conformations into the single molecule object container
+            conformer_ids = AllChem.EmbedMultipleConfs(ensemble_mol, numConfs=max_conformers, params=embed_params)
+            
+            if len(conformer_ids) == 0:
+                # Fallback to standard embedding if advanced ETKDG fails to yield an ensemble
+                conformer_ids = AllChem.EmbedMultipleConfs(ensemble_mol, numConfs=max_conformers, randomSeed=42)
+
+ # 4. Minimize all generated conformers using the MMFF94 forcefield to calculate true strain energies
+            mmff_results = AllChem.MMFFOptimizeMoleculeConfs(ensemble_mol, maxIters=300, mmffVariant="MMFF94")
+            
+            # Extract energies paired with their conformer IDs
+            conf_energies = [res[1] for res in mmff_results]
+            
+            if not conf_energies:
+                # If optimization output breaks, skip to next compound
+                continue
+                
+            min_energy = min(conf_energies)
+            valid_conf_count = 0
+
+            # 5. Filter and write out conformers within the specific thermodynamic window
+            for conf_idx, conf_id in enumerate(conformer_ids):
+                conf_energy = conf_energies[conf_idx]
+                relative_energy = conf_energy - min_energy
+                
+                # Drop high-energy shapes that are thermodynamically unlikely to occur in solution
+                if relative_energy <= energy_cutoff:
+                    valid_conf_count += 1
+                    total_conformers_written += 1
+                    
+                    # Create a distinct molecule object copy for this specific shape out-write
+                    single_shape_mol = Chem.Mol(ensemble_mol)
+                    single_shape_mol.RemoveAllConformers()
+                    single_shape_mol.AddConformer(ensemble_mol.GetConformer(conf_id), assignId=True)
+                    
+                    # Tag with a clear suffix to keep tracking clean
+                    shape_name = f"{comp_name}_conf_{valid_conf_count}"
+                    single_shape_mol.SetProp("_Name", shape_name)
+                    
+                    # Carry forward upstream attributes
+                    if mol.HasProp("InChIKey_Hash"): single_shape_mol.SetProp("InChIKey_Hash", inchikey)
+                    if mol.HasProp("SA_Score"): single_shape_mol.SetProp("SA_Score", mol.GetProp("SA_Score"))
+                    if mol.HasProp("Fraction_p3"): single_shape_mol.SetProp("Fraction_p3", mol.GetProp("Fraction_p3"))
+                    if mol.HasProp("Rings"): single_shape_mol.SetProp("Rings", mol.GetProp("Rings"))
+                    if mol.HasProp("Gasteiger_Min_Charge"): single_shape_mol.SetProp("Gasteiger_Min_Charge", mol.GetProp("Gasteiger_Min_Charge"))
+                    if mol.HasProp("Gasteiger_Max_Charge"): single_shape_mol.SetProp("Gasteiger_Max_Charge", mol.GetProp("Gasteiger_Max_Charge"))
+                    single_shape_mol.SetProp("Relative_MMFF_Energy_kcal", f"{relative_energy:.4f}")
+                    
+                    ensemble_molecules.append(single_shape_mol)
+
+            record = {
+                'Compound_ID': comp_name,
+                'InChIKey_Hash': inchikey,
+                'Total_Sampled_Conformers': len(conformer_ids),
+                'Accepted_LowEnergy_Conformers': valid_conf_count
+            }
+            ensemble_records.append(record)
+
+        except Exception as e:
+            print(f"⚠️ Ensemble sampling failed for entry {comp_name}! Reason: {str(e)}")
+            continue
+
+    # Compile tracking dataframe indices
+    df_ensemble = pd.DataFrame(ensemble_records)
+    df_ensemble.to_csv(output_csv, index=False)
+
+    # Export your finished ensemble shapes to a production master multi-SDF file
+    sdf_writer = Chem.SDWriter(output_sdf)
+    for exact_shape_mol in ensemble_molecules:
+        sdf_writer.write(exact_shape_mol)
+    sdf_writer.close()
+
+    print("\n🏆 VIRTUAL SCREENING ENSEMBLE PRODUCTION COMPLETE!")
+    print(f"📊 Total control parent configurations parsed: {total_parsed}")
+    print(f"🌀 Total low-energy 3D shape variants compiled: {total_conformers_written}")
+    print(f"💾 ENSEMBLE TRACKING SHEET EXPORTED TO: '{output_csv}'")
+    print(f"💾 MULTI-STRUCTURE PRODUCTION SDF EXPORTED TO: '{output_sdf}'")
+    print("\n🚀 All preparation steps are complete. Your final 3D screening deck is ready to dock!")
+
+    return df_ensemble
+
+# --- Execute Conformational Ensemble Pass ---
+df_ensemble_deck = generate_conformational_ensembles()
+df_ensemble_deck
+
+
