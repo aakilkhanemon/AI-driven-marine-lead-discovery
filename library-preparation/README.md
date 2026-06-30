@@ -17,38 +17,4 @@ Phase III: 3D Generation and Quantum Parameterization
 13.	Energy Minimization: Apply gradient-descent algorithms to relieve structural strain and steer coordinates toward a true local potential energy minimum.
 14.	Conformational Optimization / Ensemble Generation: Sample low-energy thermodynamic shapes for highly flexible marine leads and export the final ensemble as a multi-structure SDF or PDBQT file.
 
-Table. Ligand preparation: all steps chronologically from input to docking-ready compound. Enlisted all Python libraries and modules.  
-
-Phase / Step	Operation	Computational Model / Standard Reference	Python Library	Target Function / Modules	Library Expansion / Deduction
-Phase I: 1	Deduplication	Canonical SMILES String Generation	rdkit.Chem	Chem.CanonSmiles, pandas.DataFrame.drop_duplicates	Deduction
-(Removes redundant records)
-Phase I: 2	Structure Sanitization	Standard Valence/Aromaticity Rules	rdkit.Chem	Chem.SanitizeMol, SanitizeFlags	Deduction
-(Discards invalid/unfixable valencies)
-Phase I: 3	Fragment Removal / Desalting	Ion-Stripping Filters (Na^+, Cl^-, etc.)
-	rdkit.Chem.SaltRemover	SaltRemover.StripMol	Deduction
-(Remove salts/solvents, reduces MW)
-Phase I: 4	Functional Group Standardization	Functional Group Normalization Rules	rdkit.Chem.MolStandardize	rdkit.Chem.MolStandardize.rdMolStandardize	Neutral
-(Standardizes tautomeric/functional forms)
-Phase I: 5	Bioavailability Filtering	Lipinski’s Rule of 5 / Veber Criteria / REOS	rdkit.Chem.Descriptors	Descriptors.ExactMolWt, Descriptors.MolLogP, Lipinski.NumHDonors	Deduction
-(Eliminates non-drug-like space)
-Phase I: 6	PAINS Filtering	Pan-Assay Interference Compounds Filters	rdkit.Chem.FilterCatalog	FilterCatalogParams.FilterCategory.PAINS, FilterCatalog	Deduction
-(Eliminates pan-assay interferers)
-Phase II: 7	Physiological Protonation & Ionization	Physiological pH (7.4 \pm 0.2)
-	Dimorphite-DL / Gypsum-DL	Dimorphite_DL.run_dimorphite_dl	Expansion
-(Generates multiple protonation states at pH 7.4)
-Phase II: 8	Stereochemical Fidelity & Enumeration	Chirality and Isomer Enumeration Engines	rdkit.Chem.EnumerateStereoisomers	EnumerateStereoisomers.EnumerateStereoisomers	Expansion
-(Multiplies library via unassigned chiral centers)
-Phase III: 9	3D Coordinate Generation	Distance Geometry / Knowledge-Based Embedding	rdkit.Chem.AllChem	AllChem.EmbedMolecule, AllChem.EmbedMultipleConfs	Neutral
-(Transitions coordinates from 2D rightarrow 3D)
-Phase III: 10	Bonding Patterns & Valence Verification	Valence / Hybridization Auditing	rdkit.Chem	Chem.DetectChemistryProblems, Mol.GetHybridization	Deduction
-(Discards molecules warped during inflation)
-Phase III: 11	Atomic Partial Charge Assignment	AM1-BCC / Gasteiger Quantum Models	openff.toolkit / rdkit.Chem	Molecule.assign_partial_charges(method='am1bcc')	Neutral
-(Appends electronic parameters)
-Phase III: 12	Forcefield Parameterization	MMFF94 / OPLS4 / GAFF2	openmmforcefields / AllChem	ForceFieldFactory, AllChem.MMFFGetMoleculeProperties	Neutral
-(Appends physical parameter mechanics)
-Phase III: 13	Energy Minimization	Gradient-Descent Algorithm / Conjugate Gradient	rdkit.Chem.AllChem	AllChem.MMFFOptimizeMolecule, AllChem.UFFOptimizeMolecule	Neutral
-(Alters atomic coordinates to local minima)
-Phase III: 14	Conformational Optimization	Low-Energy Ensemble Generation (SDF / PDBQT)	rdkit.Chem.AllChem / Omega	AllChem.PruneConformers, Chem.SDWriter	Expansion
-(Generates low-energy multi-conformer ensembles)
-
 
