@@ -1,0 +1,3 @@
+To perform a cloud based MD Simulation we used Pablo Arantes "Making it rain: Cloud-based molecular simulations for everyone" scripts for running Molecular Dynamics (MD) simulations using OpenMM engine and AMBER and CHARMM force fields files on Google Colab.
+GitHub tutorial link: https://github.com/pablo-arantes/making-it-rain
+GoogleColab Script: https://github.com/pablo-arantes/making-it-rain/blob/main/Protein_ligand.ipynb
