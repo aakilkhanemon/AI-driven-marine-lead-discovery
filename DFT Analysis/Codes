@@ -1,0 +1,319 @@
+Script: Quantum Mechanical DFT Analysis Codes
+
+# Block 1: Setup Conda
+!pip install -q condacolab
+import condacolab
+condacolab.install()
+
+# Block 2: Combined installation via Mamba
+!mamba install psi4 rdkit -c psi4 -c conda-forge -y
+
+import sys
+import os
+
+# Force Python to look into the Conda environment folders
+conda_packages_path = "/usr/local/lib/python3.10/site-packages"
+conda_packages_path_alt = "/usr/local/lib/python3.11/site-packages"
+
+if os.path.exists(conda_packages_path) and conda_packages_path not in sys.path:
+    sys.path.append(conda_packages_path)
+if os.path.exists(conda_packages_path_alt) and conda_packages_path_alt not in sys.path:
+    sys.path.append(conda_packages_path_alt)
+
+# Directly double-check install via standard pip inside the active environment just in case
+extra_paths = [p for p in sys.path if 'site-packages' in p]
+print("Active search paths:", extra_paths)
+
+!pip install rdkit --quiet
+
+# Verify if it loads now
+import rdkit
+print("Success! RDKit is now found and loaded.")
+
+import os
+import sys
+
+# 1. Discover where conda installed psi4
+possible_paths = [
+    "/usr/local/lib/python3.10/site-packages",
+    "/usr/local/lib/python3.11/site-packages",
+    "/usr/local/lib/python3.12/site-packages",
+    "/usr/local/miniconda3/lib/python3.10/site-packages",
+]
+
+for path in possible_paths:
+    if os.path.exists(path) and path not in sys.path:
+        sys.path.append(path)
+
+# 2. Set the critical environmental variables Psi4 needs to run
+os.environ["PATH"] = "/usr/local/bin:" + os.environ["PATH"]
+
+# 3. Test the imports
+try:
+    import rdkit
+    import psi4
+    print("🎉 SUCCESS! Both rdkit and psi4 are successfully linked and ready to compute!")
+except ModuleNotFoundError as e:
+    print(f"Still missing a module: {e}")
+    print("Attempting a fast pip fall-back installation...")
+    !pip install psi4-pypi rdkit --quiet
+    import psi4
+    import rdkit
+    print("🎉 SUCCESS! Fixed via emergency fallback pipeline.")
+
+
+import rdkit
+from rdkit import Chem
+from rdkit.Chem import AllChem
+import psi4
+
+# Initialize Psi4 settings
+psi4.set_memory('12 GB')
+psi4.set_num_threads(2)
+
+# Your dataset mapped directly from the image (Lead 1 omitted to prevent RAM crashes)
+smiles_dict = {
+    "Compound_2": "Cc1cc(Br)c(O)c(Br)c1C1=C[C@H]2C[C@H](CO)O[C@@H]2[C@@H](C)C1",
+    "Compound_3": "Cc1noc(C)c1C(=O)Nc1ccc(F)cc1",
+    "Compound_4": "C[C@H](N[P@](=O)(OC[C@@H]1O[C@](C#N)(c2ccc3c(N)ncnn23)[C@H](O)[C@H]1O)Oc1ccccc1)C(=O)O",
+    "Compound_5": "CC#CNc1ncnc2c1ncn2[C@@H]1O[C@H](CO)[C@H](O)[C@@H]1O",
+    "Compound_6": "Cc1cc(Br)c(O)c(Br)c1C1=C[C@H]2C[C@H](n3cnc4c(N)ncnc43)O[C@@H]2[C@@H](C)C1"
+}
+
+results = {}
+
+for name, smiles in smiles_dict.items():
+    print(f"\n==================== Processing {name} ====================")
+
+    # 1. Generate 3D Conformation
+    mol = Chem.MolFromSmiles(smiles)
+    mol = Chem.AddHs(mol)
+    AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+    AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
+
+    # 2. Convert to Psi4 format string
+    conf = mol.GetConformer()
+    xyz_string = "0 1\n"  # Neutral, singlet state
+    for atom in mol.GetAtoms():
+        pos = conf.GetAtomPosition(atom.GetIdx())
+        xyz_string += f"{atom.GetSymbol()} {pos.x:10.4f} {pos.y:10.4f} {pos.z:10.4f}\n"
+
+    # 3. Load into Psi4
+    psi_mol = psi4.geometry(xyz_string)
+
+    # 4. DFT Energy Calculation (using uniform 3-21G for thesis consistency)
+    method = 'b3lyp/3-21g'
+    print(f"[{name}] Running Single-Point DFT using {method}...")
+
+    try:
+        energy, wfn = psi4.energy(method, molecule=psi_mol, return_wfn=True)
+        hartree_to_ev = 27.211386
+
+        n_alpha = wfn.nalpha()
+        homo_ev = wfn.epsilon_a().get(n_alpha - 1) * hartree_to_ev
+        lumo_ev = wfn.epsilon_a().get(n_alpha) * hartree_to_ev
+        gap_ev = lumo_ev - homo_ev
+
+        results[name] = {
+            "HOMO (eV)": round(homo_ev, 3),
+            "LUMO (eV)": round(lumo_ev, 3),
+            "Gap (eV)": round(gap_ev, 3),
+            "Status": "Success"
+        }
+    except Exception as e:
+        print(f"Error calculating {name}: {str(e)}")
+        results[name] = {"HOMO (eV)": "N/A", "LUMO (eV)": "N/A", "Gap (eV)": "N/A", "Status": "Failed"}
+
+    psi4.core.clean()
+
+# Final Presentation
+print("\n" + "="*50)
+print("                  FINAL THESIS DATA TABLE        ")
+print("="*50)
+print(f"{'Compound':<12} | {'HOMO (eV)':<10} | {'LUMO (eV)':<10} | {'Gap (eV)':<10} | {'Status'}")
+print("-" * 65)
+for comp, data in results.items():
+    print(f"{comp:<12} | {data['HOMO (eV)']:<10} | {data['LUMO (eV)']:<10} | {data['Gap (eV)']:<10} | {data['Status']}")
+
+
+# Clear the headache: Install both packages cleanly via pip
+!pip install rdkit pyscf --quiet
+
+# Quick validation check
+import rdkit
+import pyscf
+print("🎉 Success! Both RDKit and PySCF are successfully installed and recognized instantly!")
+
+
+from rdkit import Chem
+from rdkit.Chem import AllChem
+import pyscf
+from pyscf import dft
+import numpy as np
+
+# Your dataset (Lead 1 omitted to prevent memory limitations)
+smiles_dict = {
+    "Compound_2": "Cc1cc(Br)c(O)c(Br)c1C1=C[C@H]2C[C@H](CO)O[C@@H]2[C@@H](C)C1",
+    "Compound_3": "Cc1noc(C)c1C(=O)Nc1ccc(F)cc1",
+    "Compound_4": "C[C@H](N[P@](=O)(OC[C@@H]1O[C@](C#N)(c2ccc3c(N)ncnn23)[C@H](O)[C@H]1O)Oc1ccccc1)C(=O)O",
+    "Compound_5": "CC#CNc1ncnc2c1ncn2[C@@H]1O[C@H](CO)[C@H](O)[C@@H]1O",
+    "Compound_6": "Cc1cc(Br)c(O)c(Br)c1C1=C[C@H]2C[C@H](n3cnc4c(N)ncnc43)O[C@@H]2[C@@H](C)C1"
+}
+
+results = {}
+
+for name, smiles in smiles_dict.items():
+    print(f"\n==================== Processing {name} ====================")
+    try:
+        # 1. 3D Conformation Generation via RDKit
+        mol = Chem.MolFromSmiles(smiles)
+        mol = Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+        AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
+
+        # 2. Build geometry string for PySCF
+        conf = mol.GetConformer()
+        pyscf_geom = ""
+        for atom in mol.GetAtoms():
+            pos = conf.GetAtomPosition(atom.GetIdx())
+            pyscf_geom += f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}; "
+
+        # 3. Initialize PySCF Molecule Object
+        pyscf_mol = pyscf.gto.Mole()
+        pyscf_mol.atom = pyscf_geom[:-2] # Strip trailing semicolon
+        pyscf_mol.basis = '3-21g'        # Thesis uniform basis set
+        pyscf_mol.charge = 0
+        pyscf_mol.spin = 0               # Singlet state
+        pyscf_mol.build()
+
+        # 4. Set up and run B3LYP DFT calculation
+        print(f"[{name}] Running DFT calculation (B3LYP/3-21G)...")
+        mf = dft.RKS(pyscf_mol)
+        mf.xc = 'b3lyp'
+        mf.kernel()                      # Run SCF energy convergence
+
+        # 5. Extract Molecular Orbitals (Convert from Hartrees to eV)
+        hartree_to_ev = 27.211386
+        mo_energies = mf.mo_energy * hartree_to_ev
+
+        # Find the HOMO and LUMO indexes based on electron occupation numbers
+        # mo_occ tells us how many electrons are in each orbital (2 for closed shell)
+        n_occupied = np.count_nonzero(mf.mo_occ > 0)
+
+        homo_ev = mo_energies[n_occupied - 1]
+        lumo_ev = mo_energies[n_occupied]
+        gap_ev = lumo_ev - homo_ev
+
+        results[name] = {
+            "HOMO (eV)": round(homo_ev, 3),
+            "LUMO (eV)": round(lumo_ev, 3),
+            "Gap (eV)": round(gap_ev, 3),
+            "Status": "Success"
+        }
+    except Exception as e:
+        print(f"Error calculating {name}: {str(e)}")
+        results[name] = {"HOMO (eV)": "N/A", "LUMO (eV)": "N/A", "Gap (eV)": "N/A", "Status": "Failed"}
+
+# Final Presentation Data Table
+print("\n" + "="*50)
+print("                  FINAL THESIS DATA TABLE        ")
+print("="*50)
+print(f"{'Compound':<12} | {'HOMO (eV)':<10} | {'LUMO (eV)':<10} | {'Gap (eV)':<10} | {'Status'}")
+print("-" * 65)
+for comp, data in results.items():
+    print(f"{comp:<12} | {data['HOMO (eV)']:<10} | {data['LUMO (eV)']:<10} | {data['Gap (eV)']:<10} | {data['Status']}")
+
+
+import pandas as pd
+
+# 1. Input data exactly as generated by your PySCF execution
+raw_data = {
+    "Compound": ["Compound_2", "Compound_3", "Compound_4", "Compound_5", "Compound_6"],
+    "HOMO (eV)": [-6.064, -6.048, -5.910, -6.068, -5.889],
+    "LUMO (eV)": [-0.579, -0.962, -0.827, -1.138, -0.642]
+}
+
+# 2. Convert to DataFrame for easier mathematical transformations
+df = pd.DataFrame(raw_data)
+
+# 3. Calculate Global Reactivity Descriptors using Koopmans' Theorem equations
+df["Gap (eV)"] = df["LUMO (eV)"] - df["HOMO (eV)"]
+df["Electronegativity (chi, eV)"] = - (df["HOMO (eV)"] + df["LUMO (eV)"]) / 2
+df["Chemical Potential (mu, eV)"] = - df["Electronegativity (chi, eV)"]
+df["Global Hardness (eta, eV)"] = (df["LUMO (eV)"] - df["HOMO (eV)"]) / 2
+df["Global Softness (S, 1/eV)"] = 1 / (2 * df["Global Hardness (eta, eV)"])
+df["Electrophilicity Index (omega, eV)"] = (df["Chemical Potential (mu, eV)"]**2) / (2 * df["Global Hardness (eta, eV)"])
+
+# Round all values uniformly to 3 decimal places for formal thesis publication
+df_rounded = df.round(3)
+
+# 4. Display the Final Table
+print("="*105)
+print("                           EXTENDED GLOBAL REACTIVITY DESCRIPTORS FOR THESIS")
+print("="*105)
+print(df_rounded.to_string(index=False))
+print("="*105)
+
+Done with compound 2-6
+
+!pip install py3Dmol --quiet
+import py3Dmol
+print("🎉 py3Dmol installed successfully!")
+
+from rdkit import Chem
+from rdkit.Chem import AllChem
+import pyscf
+from pyscf import dft, tools
+import py3Dmol
+
+# 1. Regenerate the quantum wave function for Compound 3
+smiles = "Cc1noc(C)c1C(=O)Nc1ccc(F)cc1"
+mol = Chem.MolFromSmiles(smiles)
+mol = Chem.AddHs(mol)
+AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
+
+pyscf_geom = ""
+for atom in mol.GetAtoms():
+    pos = mol.GetConformer().GetAtomPosition(atom.GetIdx())
+    pyscf_geom += f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}; "
+
+pyscf_mol = pyscf.gto.Mole()
+pyscf_mol.atom = pyscf_geom[:-2]
+pyscf_mol.basis = '3-21g'
+pyscf_mol.build()
+
+mf = dft.RKS(pyscf_mol)
+mf.xc = 'b3lyp'
+mf.kernel()
+
+# 2. Identify HOMO and LUMO orbital indices
+n_occupied = int(sum(mf.mo_occ > 0))
+homo_idx = n_occupied - 1
+lumo_idx = n_occupied
+
+# 3. Export spatial density distributions to standard Gaussian .cube files
+print("Generating spatial grid cube files...")
+tools.cubegen.orbital(pyscf_mol, 'homo.cube', mf.mo_coeff[:, homo_idx])
+tools.cubegen.orbital(pyscf_mol, 'lumo.cube', mf.mo_coeff[:, lumo_idx])
+
+# 4. Render Interactive HTML Viewer using py3Dmol
+def display_orbital(cube_file, title, iso_val=0.04):
+    with open(cube_file, 'r') as f:
+        cube_data = f.read()
+
+    viewer = py3Dmol.view(width=500, height=400)
+    viewer.addModel(cube_data, "cube")
+    viewer.setStyle({'stick': {}})
+
+    # Render the positive phase (Red) and negative phase (Blue) translucent lobes
+    viewer.addIsosurface(cube_data, {'isoval': iso_val, 'color': 'red', 'opacity': 0.6})
+    viewer.addIsosurface(cube_data, {'isoval': -iso_val, 'color': 'blue', 'opacity': 0.6})
+
+    viewer.zoomTo()
+    print(f"\n=== 3D Rendering: {title} ===")
+    viewer.show()
+
+# Display both orbitals sequentially
+display_orbital('homo.cube', "HOMO (Highest Occupied Molecular Orbital)")
+display_orbital('lumo.cube', "LUMO (Lowest Unoccupied Molecular Orbital)")
