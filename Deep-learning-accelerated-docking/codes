@@ -1,0 +1,393 @@
+Script: GNINA Docking Codes
+
+Step 1: Core Configuration and Environment Setup
+
+# ==========================================
+# 1. STEP 1: CONFIGURATION ENVIRONMENT SETUP
+# ==========================================
+
+Python
+!pip install rdkit
+import os
+import sys
+import math
+import shutil
+import subprocess
+import numpy as np
+import pandas as pd
+from rdkit import Chem
+
+print("==========================================================")
+print("🔑 INITIALIZING PERSISTENT CLOUD SCREENING: MNPSIM ENGINE")
+print("==========================================================")
+
+# 1. Secure Mount of Cloud Storage Anchor
+from google.colab import drive
+try:
+    drive.mount('/content/drive', force_remount=True)
+except Exception:
+    drive.mount('/content/drive')
+
+DRIVE_PROJECT_DIR = "/content/drive/MyDrive/GNINA_Rec1XmnpSim_Project"
+LOCAL_SCRATCH = "/content/scratch_mnp"
+
+if not os.path.exists(DRIVE_PROJECT_DIR):
+    os.makedirs(DRIVE_PROJECT_DIR, exist_ok=True)
+    print(f"⚠️ Project path initialized inside Google Drive at: {DRIVE_PROJECT_DIR}")
+    print("👉 Please verify receptor3.pdb and mnpsim.sdf are uploaded into that folder!")
+    sys.exit()
+
+# Map file paths directly to your explicit Google Drive directory
+RECEPTOR_DRIVE = f"{DRIVE_PROJECT_DIR}/receptor3.pdb"
+LIBRARY_DRIVE = f"{DRIVE_PROJECT_DIR}/mnpsim.sdf"
+
+RECEPTOR_LOCAL = f"{LOCAL_SCRATCH}/receptor3.pdb"
+LIBRARY_LOCAL = f"{LOCAL_SCRATCH}/mnpsim.sdf"
+CHECKPOINT_DRIVE_DIR = f"{DRIVE_PROJECT_DIR}/checkpoints_mnpsim"
+
+TARGET_RESIDUES_STR = "resid 41 80 108 119 120 134"
+BATCH_SIZE = 10  # Enforced micro-batch profile
+CONTACT_CUTOFF = 4.0
+
+# Provision core topological dependency wrappers
+try:
+    import MDAnalysis as mda
+except ImportError:
+    print("• Provisioning runtime environments...")
+    subprocess.run("pip install -q rdkit mdanalysis pandas", shell=True)
+    import MDAnalysis as mda
+
+os.makedirs(LOCAL_SCRATCH, exist_ok=True)
+os.makedirs(CHECKPOINT_DRIVE_DIR, exist_ok=True)
+
+# Compile local binary driver to bypass network latency paths
+if not os.path.exists(f"{LOCAL_SCRATCH}/gnina"):
+    print("• Pulling deep learning inference compiler binary...")
+    subprocess.run(f"wget -q https://github.com/gnina/gnina/releases/download/v1.1/gnina -O {LOCAL_SCRATCH}/gnina", shell=True)
+subprocess.run(f"chmod +x {LOCAL_SCRATCH}/gnina", shell=True)
+
+if not os.path.exists(RECEPTOR_DRIVE) or not os.path.exists(LIBRARY_DRIVE):
+    raise FileNotFoundError(f"❌ Storage Error: Verify receptor3.pdb and mnpsim.sdf are located inside: {DRIVE_PROJECT_DIR}")
+
+# Cache source frameworks locally to bypass cloud storage latency bottlenecks
+if not os.path.exists(RECEPTOR_LOCAL): shutil.copy2(RECEPTOR_DRIVE, RECEPTOR_LOCAL)
+if not os.path.exists(LIBRARY_LOCAL): shutil.copy2(LIBRARY_DRIVE, LIBRARY_LOCAL)
+
+
+
+Step 2: Box Size Coordination
+
+# ==========================================
+# 2. STEP 2: DYNAMIC CAVITY GEOMETRY MAPPING
+# ==========================================
+print("\n➔ Mapping 3D spatial boundaries from target amino acid network...")
+u_rec = mda.Universe(RECEPTOR_LOCAL)
+pocket_atoms = u_rec.select_atoms(TARGET_RESIDUES_STR)
+
+if len(pocket_atoms) == 0:
+    raise ValueError("❌ Selection Mapping Failure: Targeted residues could not be resolved within receptor3.pdb!")
+
+CX, CY, CZ = pocket_atoms.center_of_mass()
+coordinate_span = np.max(pocket_atoms.positions, axis=0) - np.min(pocket_atoms.positions, axis=0)
+BOX_SIZE = max(16, math.ceil(np.max(coordinate_span) + 10.0))
+
+print(f"   • Active Cavity Center: X = {CX:.3f} | Y = {CY:.3f} | Z = {CZ:.3f}")
+print(f"   • Optimized Grid Box  : {BOX_SIZE} Å Bounding Cube")
+
+
+
+Step 3: Virtual Screening
+
+# =============================================
+# 3. STEP 3: HIGH-SPEED PARALLEL DOCKING ENGINE
+# =============================================
+supplier = Chem.SDMolSupplier(LIBRARY_LOCAL)
+molecules = [m for m in supplier if m is not None]
+total_mols = len(molecules)
+total_batches = math.ceil(total_mols / BATCH_SIZE)
+
+print(f"\n➔ Deploying GPU accelerated screening routines over {total_mols} marine compounds...")
+
+for b in range(total_batches):
+    batch_input_local = f"{LOCAL_SCRATCH}/batch_{b+1}_input.sdf"
+    batch_docked_local = f"{LOCAL_SCRATCH}/batch_{b+1}_docked.sdf"
+    batch_docked_drive = f"{CHECKPOINT_DRIVE_DIR}/batch_{b+1}_docked.sdf"
+
+    # Checkpoint Recovery Protocol: Skip if the batch output is already safe in your Drive
+    if os.path.exists(batch_docked_drive) and os.path.getsize(batch_docked_drive) > 100:
+        print(f"⏩ Batch {b+1}/{total_batches} previously stabilized in Drive. Bypassing execution.")
+        continue
+
+    print(f"🚀 Computing Checkpoint Batch {b+1}/{total_batches} on local scratch disk...")
+
+    # Write intermediate segment to ultra-fast local scratch memory
+    writer = Chem.SDWriter(batch_input_local)
+    for m in molecules[b*BATCH_SIZE : (b+1)*BATCH_SIZE]:
+        writer.write(m)
+    writer.close()
+
+    gnina_cmd = (
+        f"{LOCAL_SCRATCH}/gnina -r {RECEPTOR_LOCAL} -l {batch_input_local} "
+        f"--center_x {CX} --center_y {CY} --center_z {CZ} "
+        f"--size_x {BOX_SIZE} --size_y {BOX_SIZE} --size_z {BOX_SIZE} "
+        f"--num_modes 1 --exhaustiveness 2 --device 0 "
+        f"--out {batch_docked_local} --cnn_scoring rescore"
+    )
+    subprocess.run(gnina_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Staged Sync Command: Transfer the completed local file to Google Drive in a single move
+    if os.path.exists(batch_docked_local) and os.path.getsize(batch_docked_local) > 0:
+        shutil.copy2(batch_docked_local, batch_docked_drive)
+        # Clear temporary local storage files to optimize local cache allocations
+        os.remove(batch_input_local)
+        os.remove(batch_docked_local)
+
+print("\n==========================================================")
+print("✅ STEP 3 COMPLETION: DISK ENVELOPE SYNCHRONIZED")
+print("==========================================================")
+print(f"All structural trajectories successfully computed for {total_mols} targets.")
+print(f"Outputs securely backed up inside Google Drive: '{CHECKPOINT_DRIVE_DIR}'")
+
+
+Step 4: Top 5% Hits
+
+# ===============================
+# 4. STEP 4: IDENTIFY TOP 5% HITS
+# ===============================
+
+# Calculate 5% threshold with an absolute floor of 5 compounds for visual comparison
+calc_cutoff = int(math.ceil(len(df_sorted) * 0.05))
+final_display_count = max(5, calc_cutoff)
+
+top_hits = df_sorted.head(final_display_count)
+
+print(f"\n🏆 MARINE NATURAL PRODUCT LEADERBOARD (Top 5% Threshold Cutoff: {calc_cutoff} molecules)")
+print("-" * 80)
+print(top_hits[["Identifier", "Vina_Energy", "CNN_Score", "CNN_Affinity"]].to_string(index=False))
+print("-" * 80)
+
+# 3. Export coordinated PDB complex files for Discovery Studio
+with open(RECEPTOR_PATH, 'r') as f:
+    receptor_text = f.read()
+
+for idx, row in top_hits.iterrows():
+    clean_id = "".join([c if c.isalnum() else "_" for c in row["Identifier"]])
+    out_pdb = f"{OUTPUT_DIR}/MNP_Rank_{idx+1}_{clean_id}_complex.pdb"
+    with open(out_pdb, 'w') as out:
+        out.write(receptor_text + "\n" + Chem.MolToPDBBlock(row["mol_obj"]))
+
+print(f"\n🎉 Success! Complex structures saved to Google Drive folder: '{OUTPUT_DIR}'")
+
+
+Step 5: Top 5 Vina Scorer 
+
+# ==========================================
+# 5. STEP 5: IDENTIFY TOP 5 VINA SCORER HITS
+# ==========================================
+
+# 2. Iterate through checkpoint structures and gather thermodynamic data
+for f_path in docked_files:
+    supp = Chem.SDMolSupplier(f_path)
+    for mol in supp:
+        if mol is None: continue
+        
+        # 🛡️ PROTECTIVE FILTER: Skip entries that lack processing metadata tags
+        if not mol.HasProp('minimizedAffinity') or not mol.HasProp('CNNscore'):
+            skipped_count += 1
+            continue
+            
+        name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"MNP_Compound_{len(all_poses)}"
+        all_poses.append({
+            "mol_obj": mol,
+            "Identifier": name,
+            "Vina_Energy": float(mol.GetProp('minimizedAffinity')),
+            "CNN_Score": float(mol.GetProp('CNNscore')),
+            "CNN_Affinity": float(mol.GetProp('CNNaffinity'))
+        })
+
+print(f"• File aggregation complete. (Safely bypassed {skipped_count} non-docked records).")
+
+df = pd.DataFrame(all_poses)
+# Sort ascending: lowest/most negative free energy values represent premium packing stability
+df_sorted = df.sort_values(by="Vina_Energy", ascending=True).reset_index(drop=True)
+top_5_vina = df_sorted.head(5)
+
+print("\n🏆 GLOBAL THERMODYNAMIC LEADERBOARD (ABSOLUTE TOP 5 VINA HITS)")
+print("-" * 80)
+print(top_5_vina[["Identifier", "Vina_Energy", "CNN_Score", "CNN_Affinity"]].to_string(index=False))
+print("-" * 80)
+
+# 3. Export coordinated PDB complex files for Discovery Studio
+with open(RECEPTOR_PATH, 'r') as f:
+    receptor_text = f.read()
+
+for idx, row in top_5_vina.iterrows():
+    clean_id = "".join([c if c.isalnum() else "_" for c in row["Identifier"]])
+    out_pdb = f"{OUTPUT_DIR}/Global_Vina_Rank_{idx+1}_{clean_id}_complex.pdb"
+    with open(out_pdb, 'w') as out:
+        out.write(receptor_text + "\n" + Chem.MolToPDBBlock(row["mol_obj"]))
+
+print(f"\n🎉 Success! Global Top 5 Vina complexes safely saved to Drive path: '{OUTPUT_DIR}'")
+
+
+Step 6: Top 5 CNN Pose Scorer
+
+# ==============================================
+# 6. STEP 6: IDENTIFY TOP 5 CNN POSE SCORER HITS
+# ==============================================
+
+# 2. Iterate through checkpoint structures and gather convolutional scoring data
+for f_path in docked_files:
+    supp = Chem.SDMolSupplier(f_path)
+    for mol in supp:
+        if mol is None: continue
+        
+        # 🛡️ PROTECTIVE FILTER: Skip entries that lack processing metadata tags
+        if not mol.HasProp('minimizedAffinity') or not mol.HasProp('CNNscore'):
+            skipped_count += 1
+            continue
+            
+        name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"MNP_Compound_{len(all_poses)}"
+        all_poses.append({
+            "mol_obj": mol,
+            "Identifier": name,
+            "Vina_Energy": float(mol.GetProp('minimizedAffinity')),
+            "CNN_Score": float(mol.GetProp('CNNscore')),
+            "CNN_Affinity": float(mol.GetProp('CNNaffinity'))
+        })
+
+print(f"• File aggregation complete. (Safely bypassed {skipped_count} non-docked records).")
+
+df = pd.DataFrame(all_poses)
+# Sort descending: values closest to 1.0 represent premium geometric shape alignment
+df_sorted = df.sort_values(by="CNN_Score", ascending=False).reset_index(drop=True)
+top_5_cnn = df_sorted.head(5)
+
+print("\n🏆 GLOBAL GEOMETRIC LEADERBOARD (ABSOLUTE TOP 5 CNN HITS)")
+print("-" * 80)
+print(top_5_cnn[["Identifier", "Vina_Energy", "CNN_Score", "CNN_Affinity"]].to_string(index=False))
+print("-" * 80)
+
+# 3. Export coordinated PDB complex files for Discovery Studio
+with open(RECEPTOR_PATH, 'r') as f:
+    receptor_text = f.read()
+
+for idx, row in top_5_cnn.iterrows():
+    clean_id = "".join([c if c.isalnum() else "_" for c in row["Identifier"]])
+    out_pdb = f"{OUTPUT_DIR}/Global_CNN_Rank_{idx+1}_{clean_id}_complex.pdb"
+    with open(out_pdb, 'w') as out:
+        out.write(receptor_text + "\n" + Chem.MolToPDBBlock(row["mol_obj"]))
+
+print(f"\n🎉 Success! Global Top 5 CNN complexes safely saved to Drive path: '{OUTPUT_DIR}'")
+
+
+Step 7: Top 5 Target Residue Specific with SMILES
+
+# =======================================================
+# 7. STEP 7: IDENTIFY TOP 5 TARGET RESIDUES SPECIFIC HITS
+# =======================================================
+
+
+import os
+import numpy as np
+import pandas as pd
+from rdkit import Chem
+from google.colab import drive
+
+print("==========================================================")
+print("🔍 SCRIPT: TARGETED RESIDUE FILTER + CANONICAL SMILES EXTRACTION")
+print("==========================================================")
+
+# 1. Mount and map cloud storage environment
+try: drive.mount('/content/drive')
+except Exception: pass
+
+DRIVE_PROJECT_DIR = "/content/drive/MyDrive/GNINA_Rec1XmnpSim_Project"
+CHECKPOINT_DIR = f"{DRIVE_PROJECT_DIR}/checkpoints_mnpsim"
+OUTPUT_DIR = f"{DRIVE_PROJECT_DIR}/Mechanism_Specific_SMILES_Top_5"
+RECEPTOR_PATH = f"{DRIVE_PROJECT_DIR}/receptor3.pdb"
+
+TARGET_RESIDUES_STR = "resid 41 80 108 119 120 134"
+CONTACT_CUTOFF = 4.0
+
+try:
+    import MDAnalysis as mda
+except ImportError:
+    import subprocess
+    subprocess.run("pip install -q rdkit mdanalysis pandas", shell=True)
+    import MDAnalysis as mda
+
+if not os.path.exists(CHECKPOINT_DIR):
+    raise FileNotFoundError(f"❌ Storage Error: Checkpoint directory missing at: {CHECKPOINT_DIR}")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# 2. Extract 3D coordinates of target amino acid side chains
+u_rec = mda.Universe(RECEPTOR_PATH)
+pocket_atoms = u_rec.select_atoms(TARGET_RESIDUES_STR)
+target_coords = pocket_atoms.positions
+
+valid_binders = []
+skipped_count = 0
+docked_files = [os.path.join(CHECKPOINT_DIR, f) for f in os.listdir(CHECKPOINT_DIR) if f.endswith("_docked.sdf")]
+
+# 3. Parse trajectories and map spatial interaction metrics
+for f_path in docked_files:
+    supp = Chem.SDMolSupplier(f_path)
+    for mol in supp:
+        if mol is None: continue
+        
+        # Protective Layer: Skip records missing GNINA calculation properties
+        if not mol.HasProp('minimizedAffinity') or not mol.HasProp('CNNscore'):
+            skipped_count += 1
+            continue
+            
+        conf = mol.GetConformer()
+        ligand_coords = np.array([list(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())])
+        
+        # Calculate minimum distance vector between ligand atoms and key residues
+        distances = np.linalg.norm(ligand_coords[:, np.newaxis, :] - target_coords[np.newaxis, :, :], axis=2)
+        min_dist = np.min(distances)
+        
+        if min_dist <= CONTACT_CUTOFF:
+            name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"MNP_Compound_{len(valid_binders)}"
+            
+            # Translate 3D molecular graph into a clean 2D canonical SMILES line notation
+            canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
+            
+            valid_binders.append({
+                "mol_obj": mol,
+                "Identifier": name,
+                "Vina_Energy": float(mol.GetProp('minimizedAffinity')),
+                "CNN_Score": float(mol.GetProp('CNNscore')),
+                "Proximity_Å": round(min_dist, 3),
+                "SMILES": canonical_smiles
+            })
+
+print(f"• Trajectory scan complete. (Bypassed {skipped_count} non-docked records).")
+
+# 4. Compile, sort, and isolate the top 5 elite pocket binders
+if len(valid_binders) == 0:
+    print("❌ Selection Matrix Failure: No compounds located within 4.0 Å of active site side chains.")
+else:
+    df_filtered = pd.DataFrame(valid_binders)
+    df_sorted = df_filtered.sort_values(by="Vina_Energy", ascending=True).reset_index(drop=True)
+    top_5_mechanism = df_sorted.head(5)
+
+    print("\n==========================================================================================")
+    print(" 🏆 ACTIVE SITE MECHANISTIC LEADERBOARD WITH CANONICAL SMILES")
+    print("==========================================================================================")
+    pd.set_option('display.max_colwidth', None)
+    print(top_5_mechanism[["Identifier", "Vina_Energy", "CNN_Score", "Proximity_Å", "SMILES"]].to_string(index=False))
+    print("==========================================================================================")
+
+    # Export structural coordinates (.pdb) for downstream MOE verification
+    with open(RECEPTOR_PATH, 'r') as f:
+        receptor_text = f.read()
+
+    for idx, row in top_5_mechanism.iterrows():
+        clean_id = "".join([c if c.isalnum() else "_" for c in row["Identifier"]])
+        out_pdb = f"{OUTPUT_DIR}/Mechanism_Lead_{idx+1}_{clean_id}_complex.pdb"
+        with open(out_pdb, 'w') as out:
+            out.write(receptor_text + "\n" + Chem.MolToPDBBlock(row["mol_obj"]))
+
+    print(f"🎉 Success! Top 5 targeted structural complexes exported to: {OUTPUT_DIR}")
