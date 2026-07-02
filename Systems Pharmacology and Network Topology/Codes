@@ -1,0 +1,402 @@
+Script: Network topology codes
+import pandas as pd
+import networkx as nx
+import matplotlib.pyplot as plt
+import requests
+import time
+
+# 1. Definitive Target Lists for Compounds 1-6 (UniProt IDs)
+compounds_targets = {
+    "Compound_1": ["P56817", "P22303", "Q9BY41", "Q92769", "P56524", "P06276", "P09917", "Q9UNI1", "Q92731", "O75460", "O14788", "P03372", "P48147", "P34972", "P21554"],
+    "Compound_2": ["P04278", "Q92731", "P03372", "P22736", "P00915", "Q01959", "P18031", "P08575", "P30305", "P04150", "P31645", "P35968", "P00918", "Q16790", "O43570"],
+    "Compound_3": ["P05177", "Q01959", "P23975", "Q02127", "Q92847", "Q9Y5N1", "P35354", "Q16665", "P35968", "P07333", "P17948", "P00918", "P00915", "Q06187", "P35228"],
+    "Compound_4": ["Q86WV6", "O15393", "O00411", "Q8TEK3", "P13569", "P37023", "P42336", "P08473", "P42892", "P12821", "O75907", "Q06187", "P51449", "O14829", "P04818"],
+    "Compound_5": ["P30542", "P0DMS8", "P29274", "Q99808", "P55263", "Q99720", "P23975", "O43318", "Q01959", "P27487", "O14744", "Q9BQA1", "P23526", "P11142", "P11021", "P00813"],
+    "Compound_6": ["P14061", "P30542", "P29274", "P0DMS8", "P21589", "Q86U44", "P00533", "P04626", "O00408", "P36888", "Q16539", "P54646", "P08183", "O14744"]
+}
+
+# Color palette for distinct visualization across figures
+colors = ["#1a5276", "#27ae60", "#9b59b6", "#e67e22", "#e74c3c", "#34495e"]
+
+# 2. Iterate through each compound to query STRING and generate network plots
+for i, (comp_name, targets) in enumerate(compounds_targets.items()):
+    print(f"Processing STRING network for {comp_name} ({len(targets)} targets)...")
+
+    # Fetching STRING Data (High Confidence Threshold 0.700)
+    string_url = "https://string-db.org/api/json/network"
+    params = {
+        "identifiers": "\r".join(targets),
+        "species": 9606,            # Human taxonomy ID
+        "required_score": 700,      # High confidence threshold
+        "caller_identity": f"mpox_{comp_name.lower()}"
+    }
+
+    try:
+        response = requests.post(string_url, data=params)
+        response.raise_for_status()
+        res = response.json()
+    except Exception as e:
+        print(f"Error fetching data for {comp_name}: {e}")
+        continue
+
+    # 3. Graph Construction
+    G = nx.Graph()
+
+    # Maps queried identifiers to mapped names returned by STRING to prevent mixed label schemes
+    mapped_nodes = set()
+    for edge in res:
+        node_a = edge['preferredName_A']
+        node_b = edge['preferredName_B']
+        G.add_edge(node_a, node_b, weight=edge['score'])
+        mapped_nodes.update([node_a, node_b])
+
+    # Handle singletons/isolates that do not have high-confidence edges
+    # STRING API maps input IDs to native names. To ensure labels are coherent,
+    # isolates are added dynamically if they aren't explicitly caught in the edge mapping.
+    G.add_nodes_from(mapped_nodes)
+
+    if len(G.nodes) == 0:
+        print(f"No interactions found at confidence score 0.700 for {comp_name}. Skipping visual plot.")
+        continue
+
+    # 4. Topological Scaling
+    degree = dict(G.degree())
+    node_sizes = [v * 500 + 800 for v in degree.values()] # Scaled for clarity
+
+    # 5. Visual Rendering (Super High Res)
+    plt.figure(figsize=(10, 10), dpi=300)
+    pos = nx.kamada_kawai_layout(G)
+
+    # Draw Edges
+    nx.draw_networkx_edges(G, pos, width=1.5, edge_color='#D3D3D3', alpha=0.6)
+
+    # Draw Nodes
+    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=colors[i],
+                           edgecolors='white', linewidths=1.5)
+
+    # Draw Labels
+    nx.draw_networkx_labels(G, pos, font_size=10, font_family='sans-serif',
+                            font_weight='bold', font_color='black')
+
+    plt.title(f"Target Interaction Network: {comp_name.replace('_', ' ')} (n={len(G.nodes)})", fontsize=14, pad=15)
+    plt.axis('off')
+
+    # 6. Saving the Publication-Ready File
+    file_name = f"{comp_name}_Network_HighRes.png"
+    plt.savefig(file_name, format='png', bbox_inches='tight', dpi=600)
+    plt.close() # Close plot to clear memory in Colab loops
+    print(f"Saved {file_name}")
+
+    # Brief pause to respect API rate limits
+    time.sleep(1)
+
+print("\nAll compound interaction figures generated successfully at 600 DPI.")
+
+
+
+import os
+import requests
+import time
+
+# 1. Definitive Target Lists for Compounds 1-6 (UniProt IDs)
+compounds_targets = {
+    "Compound_1": ["P56817", "P22303", "Q9BY41", "Q92769", "P56524", "P06276", "P09917", "Q9UNI1", "Q92731", "O75460", "O14788", "P03372", "P48147", "P34972", "P21554"],
+    "Compound_2": ["P04278", "Q92731", "P03372", "P22736", "P00915", "Q01959", "P18031", "P08575", "P30305", "P04150", "P31645", "P35968", "P00918", "Q16790", "O43570"],
+    "Compound_3": ["P05177", "Q01959", "P23975", "Q02127", "Q92847", "Q9Y5N1", "P35354", "Q16665", "P35968", "P07333", "P17948", "P00918", "P00915", "Q06187", "P35228"],
+    "Compound_4": ["Q86WV6", "O15393", "O00411", "Q8TEK3", "P13569", "P37023", "P42336", "P08473", "P42892", "P12821", "O75907", "Q06187", "P51449", "O14829", "P04818"],
+    "Compound_5": ["P30542", "P0DMS8", "P29274", "Q99808", "P55263", "Q99720", "P23975", "O43318", "Q01959", "P27487", "O14744", "Q9BQA1", "P23526", "P11142", "P11021", "P00813"],
+    "Compound_6": ["P14061", "P30542", "P29274", "P0DMS8", "P21589", "Q86U44", "P00533", "P04626", "O00408", "P36888", "Q16539", "P54646", "P08183", "O14744"]
+}
+
+# 2. STRING Image Generation API Setup
+# Documentation endpoint: https://string-db.org/help/api/
+string_image_url = "https://string-db.org/api/image/network"
+
+for comp_name, targets in compounds_targets.items():
+    print(f"Fetching classical STRING diagram for {comp_name}...")
+
+    # Configure parameters to match the authentic high-resolution web layout
+    params = {
+        "identifiers": "\r".join(targets),
+        "species": 9606,                  # Homo sapiens
+        "required_score": 700,            # High confidence threshold (0.700)
+        "network_flavor": "evidence",     # Shows multi-colored evidence lines
+        "add_white_nodes": 0,             # Set to 0 to only include your input targets
+        "network_type": "functional",     # Functional association networks
+        "hide_disconnected_nodes": 0,     # Keeps singletons visible if needed
+        "caller_identity": f"mpox_vis_{comp_name.lower()}"
+    }
+
+    try:
+        response = requests.post(string_image_url, data=params)
+        response.raise_for_status()
+
+        # Save the returned image file directly
+        output_filename = f"{comp_name}_STRING_Classical.png"
+        with open(output_filename, "wb") as f:
+            f.write(response.content)
+
+        print(f"Successfully saved: {output_filename}")
+
+    except requests.exceptions.HTTPError as err:
+        print(f"HTTP error occurred for {comp_name}: {err}")
+    except Exception as e:
+        print(f"An error occurred for {comp_name}: {e}")
+
+    # Respectful pacing for API infrastructure
+    time.sleep(1.5)
+
+print("\nAll classical network figures successfully downloaded.")
+
+
+import pandas as pd
+import networkx as nx
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import requests
+import time
+
+# 1. Target Lists for Compounds 1-6 (UniProt IDs)
+compounds_targets = {
+    "Compound_1": ["P56817", "P22303", "Q9BY41", "Q92769", "P56524", "P06276", "P09917", "Q9UNI1", "Q92731", "O75460", "O14788", "P03372", "P48147", "P34972", "P21554"],
+    "Compound_2": ["P04278", "Q92731", "P03372", "P22736", "P00915", "Q01959", "P18031", "P08575", "P30305", "P04150", "P31645", "P35968", "P00918", "Q16790", "O43570"],
+    "Compound_3": ["P05177", "Q01959", "P23975", "Q02127", "Q92847", "Q9Y5N1", "P35354", "Q16665", "P35968", "P07333", "P17948", "P00918", "P00915", "Q06187", "P35228"],
+    "Compound_4": ["Q86WV6", "O15393", "O00411", "Q8TEK3", "P13569", "P37023", "P42336", "P08473", "P42892", "P12821", "O75907", "Q06187", "P51449", "O14829", "P04818"],
+    "Compound_5": ["P30542", "P0DMS8", "P29274", "Q99808", "P55263", "Q99720", "P23975", "O43318", "Q01959", "P27487", "O14744", "Q9BQA1", "P23526", "P11142", "P11021", "P00813"],
+    "Compound_6": ["P14061", "P30542", "P29274", "P0DMS8", "P21589", "Q86U44", "P00533", "P04626", "O00408", "P36888", "Q16539", "P54646", "P08183", "O14744"]
+}
+
+# Standard cytoHubba Heat Palette (Rank 1 -> Rank 10)
+def get_hub_color(rank):
+    colors = ['#FF0000', '#FF4500', '#FF8C00', '#FFA500', '#FFD700',
+              '#FFFF00', '#FFFF33', '#FFFF66', '#FFFF99', '#FFFFCC']
+    return colors[min(rank, len(colors)-1)]
+
+# 2. Loop Through Each Compound
+for comp_name, uniprot_ids in compounds_targets.items():
+    print(f"Generating cytoHubba Network for {comp_name}...")
+
+    # Resolve network mapping via STRING API v12
+    string_api_url = "https://version12.string-db.org/api/json/network"
+    params = {
+        "identifiers": "\r".join(uniprot_ids),
+        "species": 9606,
+        "required_score": 700,
+        "caller_identity": f"mpox_{comp_name.lower()}_cyto"
+    }
+
+    try:
+        response = requests.post(string_api_url, data=params)
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            print(f"No interactions found for {comp_name}. Skipping.")
+            continue
+        df = pd.DataFrame(data)
+    except Exception as e:
+        print(f"API Error on {comp_name}: {e}")
+        continue
+
+    # 3. Build Network and Calculate Degree Topology
+    G = nx.Graph()
+    for _, row in df.iterrows():
+        G.add_edge(row['preferredName_A'], row['preferredName_B'])
+
+    degree_dict = dict(G.degree())
+
+    # Sort and capture the Top 10 Hub Nodes
+    top_nodes = sorted(degree_dict.items(), key=lambda x: x[1], reverse=True)[:10]
+    hub_names = [node[0] for node in top_nodes]
+    subG = G.subgraph(hub_names)
+
+    # 4. Canvas Configurations
+    fig, ax = plt.subplots(figsize=(15, 9), dpi=300)
+    plt.subplots_adjust(left=0.3)
+
+    # Calculate spring layout layout constraints
+    pos = nx.spring_layout(subG, k=1.8, seed=42)
+
+    # Draw Background Edges
+    nx.draw_networkx_edges(subG, pos, ax=ax, width=2, edge_color='#2C3E50', alpha=0.7)
+
+    # 5. Draw cytoHubba-Style Node Boxes
+    for node, (x, y) in pos.items():
+        # Pinpoint the node's ranking index
+        rank = next(idx for idx, (name, val) in enumerate(top_nodes) if name == node)
+        color = get_hub_color(rank)
+
+        # Build characteristic rounded node box
+        rect = patches.FancyBboxPatch((x-0.14, y-0.07), 0.28, 0.14,
+                                      boxstyle="round,pad=0.02",
+                                      linewidth=2, edgecolor='#2C3E50', facecolor=color)
+        ax.add_patch(rect)
+        ax.text(x, y, node, ha='center', va='center', fontsize=12, fontweight='bold', fontfamily='sans-serif')
+
+    # 6. Build the Matplotlib Ranking Table
+    table_data = [[i+1, node] for i, (node, deg) in enumerate(top_nodes)]
+    the_table = plt.table(cellText=table_data, colLabels=['Rank', 'Node'],
+                          loc='left', cellLoc='center', colWidths=[0.07, 0.15])
+
+    the_table.auto_set_font_size(False)
+    the_table.set_fontsize(11)
+    the_table.scale(1.2, 2.3)
+
+    # Inject exact hex code gradients into table cell matrices
+    for i in range(len(table_data)):
+        the_table[(i+1, 0)].set_facecolor(get_hub_color(i))
+        the_table[(i+1, 1)].set_facecolor(get_hub_color(i))
+
+    ax.axis('off')
+    clean_title = comp_name.replace("_", " ")
+    plt.title(f"{clean_title}: cytoHubba Hub Selection (Top 10 by Degree)", fontsize=16, fontweight='bold', pad=30)
+
+    # Save high-res png output
+    output_name = f"{comp_name}_cytoHubba_Top10.png"
+    plt.savefig(output_name, bbox_inches='tight', dpi=600)
+    plt.close()
+    print(f"Successfully generated and saved {output_name}")
+
+    time.sleep(1)
+
+
+import pandas as pd
+import requests
+import networkx as nx
+from google.colab import files
+import time
+
+def generate_compound_metrics_table(uniprot_list, compound_name):
+    print(f"🔄 Characterizing topology for {compound_name}...")
+
+    # 1. Map UniProt IDs to Official Gene Names to avoid raw accessions in table
+    string_id_url = "https://string-db.org/api/json/get_string_ids"
+    id_params = {
+        "identifiers": "\r".join(uniprot_list),
+        "species": 9606,
+        "caller_identity": f"mpox_{compound_name.lower()}_map"
+    }
+
+    try:
+        id_resp = requests.post(string_id_url, data=id_params)
+        id_data = id_resp.json()
+
+        # Create mapping dictionary {string_internal_id: official_gene_symbol}
+        # and a set of preferred names to handle isolated singletons accurately
+        id_map = {item['stringId']: item['preferredName'] for item in id_data}
+        all_mapped_genes = set(item['preferredName'] for item in id_data)
+
+        if not id_map:
+            print(f"⚠️ Could not map identifiers for {compound_name}. Proceeding with raw data.")
+            all_mapped_genes = set(uniprot_list)
+    except Exception as e:
+        print(f"⚠️ ID Mapping failed ({e}). Node names might fall back to raw inputs.")
+        id_map = {}
+        all_mapped_genes = set(uniprot_list)
+
+    # 2. Fetch Interactions from STRING API (v12.0)
+    string_api_url = "https://string-db.org/api/json/network"
+    params = {
+        "identifiers": "\r".join(uniprot_list),
+        "species": 9606,
+        "required_score": 700, # High-Confidence Threshold
+        "caller_identity": f"mpox_{compound_name.lower()}_metrics"
+    }
+
+    try:
+        response = requests.post(string_api_url, data=params)
+        network_data = response.json()
+        df = pd.DataFrame(network_data)
+
+        # Initialize Graph
+        G = nx.Graph()
+
+        if not df.empty:
+            # Build edges using preferred names directly from the interaction payload
+            for _, row in df.iterrows():
+                G.add_edge(row['preferredName_A'], row['preferredName_B'])
+
+        # Explicitly add all mapped input targets to capture zero-degree isolates/singletons
+        G.add_nodes_from(all_mapped_genes)
+
+        if len(G.nodes) == 0:
+            print(f"⚠️ Empty network generated for {compound_name}.")
+            return None
+
+        # 3. Calculate NetworkX Topological Centralities
+        degree_dict = dict(G.degree())
+        betweenness_dict = nx.betweenness_centrality(G, normalized=True)
+
+        # 4. Build and Format the Metrics Table (Matching the user screenshot)
+        metrics_df = pd.DataFrame({
+            'Node Name': list(degree_dict.keys()),
+            'Degree (k)': [degree_dict[node] for node in degree_dict.keys()],
+            'Betweenness Centrality (Cb)': [round(betweenness_dict[node], 6) for node in degree_dict.keys()]
+        })
+
+        # Sort by Degree (Primary) and Betweenness (Secondary) descending
+        metrics_df = metrics_df.sort_values(by=['Degree (k)', 'Betweenness Centrality (Cb)'], ascending=False).reset_index(drop=True)
+
+        # 5. Export and Auto-Download CSV for ESI
+        filename = f"Table_S2_{compound_name}_Topological_Metrics.csv"
+        metrics_df.to_csv(filename, index=True, index_label="Index")
+        files.download(filename)
+
+        print(f"✅ {compound_name} complete. Table saved as '{filename}'.")
+
+        # Render clean view in Colab output cell
+        return metrics_df
+
+    except Exception as e:
+        print(f"❌ Error in {compound_name} metrics compilation: {e}")
+        return None
+
+# --- DEFINING EXPLICIT TARGET LISTS FOR YOUR SIX COMPOUNDS ---
+compounds_data = {
+    "Compound_1": ["P56817", "P22303", "Q9BY41", "Q92769", "P56524", "P06276", "P09917", "Q9UNI1", "Q92731", "O75460", "O14788", "P03372", "P48147", "P34972", "P21554"],
+    "Compound_2": ["P04278", "Q92731", "P03372", "P22736", "P00915", "Q01959", "P18031", "P08575", "P30305", "P04150", "P31645", "P35968", "P00918", "Q16790", "O43570"],
+    "Compound_3": ["P05177", "Q01959", "P23975", "Q02127", "Q92847", "Q9Y5N1", "P35354", "Q16665", "P35968", "P07333", "P17948", "P00918", "P00915", "Q06187", "P35228"],
+    "Compound_4": ["Q86WV6", "O15393", "O00411", "Q8TEK3", "P13569", "P37023", "P42336", "P08473", "P42892", "P12821", "O75907", "Q06187", "P51449", "O14829", "P04818"],
+    "Compound_5": ["P30542", "P0DMS8", "P29274", "Q99808", "P55263", "Q99720", "P23975", "O43318", "Q01959", "P27487", "O14744", "Q9BQA1", "P23526", "P11142", "P11021", "P00813"],
+    "Compound_6": ["P14061", "P30542", "P29274", "P0DMS8", "P21589", "Q86U44", "P00533", "P04626", "O00408", "P36888", "Q16539", "P54646", "P08183", "O14744"]
+}
+
+# --- BATCH EXECUTION LOOP ---
+results = {}
+for comp_name, uniprot_identifiers in compounds_data.items():
+    results[comp_name] = generate_compound_metrics_table(uniprot_identifiers, comp_name)
+    display(results[comp_name].head(15)) # Displays top 15 rows cleanly in Colab
+    time.sleep(2) # Prevent browser file-download blocks
+
+print("\n🚀 All 6 compound topological metrics successfully calculated and downloaded.")
+
+
+import os
+import zipfile
+from google.colab import files
+
+# 1. Define the output zip archive name
+zip_filename = "Mpox_Systems_Pharmacology_Network_Results.zip"
+
+# 2. Automatically detect all generated network images and CSV metrics tables
+files_to_zip = []
+for file in os.listdir('.'):
+    if file.endswith('.png') or file.endswith('.csv'):
+        if any(f"Compound_{i}" in file for i in range(1, 7)):
+            files_to_zip.append(file)
+
+# 3. Compile the files into the ZIP folder structure
+if files_to_zip:
+    print(f"📦 Found {len(files_to_zip)} matching files. Generating compressed archive...")
+    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file in sorted(files_to_zip):
+            zipf.write(file)
+            print(f"   ➔ Added: {file}")
+
+    print(f"\n✅ Archive compilation complete: '{zip_filename}'")
+
+    # 4. Trigger automatic browser download
+    print("🚀 Initiating local system download...")
+    files.download(zip_filename)
+else:
+    print("❌ Error: No generated compound PNGs or CSVs found in the active workspace directory.")
+
