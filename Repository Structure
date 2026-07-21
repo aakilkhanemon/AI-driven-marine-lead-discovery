@@ -1,0 +1,37 @@
+AI-driven-marine-lead-discovery/
+├── README.md
+├── requirements.txt
+├── environment.yml
+├── setup.py
+├── config/
+│   └── parameters.yaml
+├── data/
+│   ├── raw/
+│   ├── processed/
+│   └── outputs/
+├── src/
+│   ├── __init__.py
+│   ├── library_curation/
+│   │   ├── __init__.py
+│   │   ├── similarity.py
+│   │   ├── scaffold_hopping.py
+│   │   └── de_novo.py
+│   ├── docking/
+│   │   ├── __init__.py
+│   │   ├── cavity_mapping.py
+│   │   └── gnina_runner.py
+│   ├── molecular_dynamics/
+│   │   ├── __init__.py
+│   │   ├── trajectory_analysis.py
+│   │   └── mmpbsa.py
+│   ├── dft_quantum/
+│   │   ├── __init__.py
+│   │   └── dft_runner.py
+│   ├── systems_pharmacology/
+│   │   ├── __init__.py
+│   │   └── network_topology.py
+│   └── consensus_ml/
+│       ├── __init__.py
+│       └── scoring_pipeline.py
+└── scripts/
+    └── run_pipeline.py
