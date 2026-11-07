@@ -5,7 +5,7 @@
 [![RDKit](https://img.shields.io/badge/RDKit-2023.09+-green.svg)](https://www.rdkit.org/)
 [![GNINA](https://img.shields.io/badge/GNINA-v1.1-red.svg)](https://github.com/gnina/gnina)
 
-An integrated computational framework combining 2D/3D cheminformatics, deep-learning docking, explicit-solvent molecular dynamics (MD), Density Functional Theory (DFT), systems pharmacology, and consensus machine learning scoring for novel drug candidate identification.
+An integrated computational framework combining 2D/3D cheminformatics, deep-learning docking, explicit-solvent molecular dynamics (MD), Density Functional Theory (DFT), systems pharmacology, and machine learning consensus scoring for novel drug candidate identification.
 
 ---
 
